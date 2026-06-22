@@ -52,7 +52,7 @@ func isQuotaError(resp *http.Response) bool {
 		return false
 	}
 	body, err := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	resp.Body = io.NopCloser(bytes.NewReader(body))
 	if err != nil {
 		return false
