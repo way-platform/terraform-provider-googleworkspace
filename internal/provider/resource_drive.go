@@ -139,6 +139,13 @@ func (r *driveResource) Create(ctx context.Context, req resource.CreateRequest, 
 				DomainUsersOnly:                           plan.Restrictions.DomainUsersOnly.ValueBool(),
 				DriveMembersOnly:                          plan.Restrictions.DriveMembersOnly.ValueBool(),
 				SharingFoldersRequiresOrganizerPermission: plan.Restrictions.SharingFoldersRequiresOrganizerPermission.ValueBool(),
+				ForceSendFields: []string{
+					"AdminManagedRestrictions",
+					"CopyRequiresWriterPermission",
+					"DomainUsersOnly",
+					"DriveMembersOnly",
+					"SharingFoldersRequiresOrganizerPermission",
+				},
 			},
 		}
 		_, err = driveSvc.Drives.Update(created.Id, updateReq).
@@ -219,6 +226,13 @@ func (r *driveResource) Update(ctx context.Context, req resource.UpdateRequest, 
 			DomainUsersOnly:                           plan.Restrictions.DomainUsersOnly.ValueBool(),
 			DriveMembersOnly:                          plan.Restrictions.DriveMembersOnly.ValueBool(),
 			SharingFoldersRequiresOrganizerPermission: plan.Restrictions.SharingFoldersRequiresOrganizerPermission.ValueBool(),
+			ForceSendFields: []string{
+				"AdminManagedRestrictions",
+				"CopyRequiresWriterPermission",
+				"DomainUsersOnly",
+				"DriveMembersOnly",
+				"SharingFoldersRequiresOrganizerPermission",
+			},
 		}
 	}
 

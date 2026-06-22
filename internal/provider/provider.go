@@ -17,6 +17,9 @@ import (
 
 var _ provider.Provider = &googleworkspaceProvider{}
 
+// testAPIClient is set by tests to bypass authentication and inject a mock client.
+var testAPIClient *apiClient
+
 type googleworkspaceProvider struct {
 	version string
 }
@@ -77,6 +80,13 @@ func (p *googleworkspaceProvider) Configure(ctx context.Context, req provider.Co
 	var data googleworkspaceProviderModel
 	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// In tests, skip authentication and use the injected mock client.
+	if testAPIClient != nil {
+		resp.DataSourceData = testAPIClient
+		resp.ResourceData = testAPIClient
 		return
 	}
 
