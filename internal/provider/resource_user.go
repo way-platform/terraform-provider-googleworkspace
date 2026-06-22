@@ -111,6 +111,7 @@ func (r *userResource) Create(ctx context.Context, req resource.CreateRequest, r
 		ChangePasswordAtNextLogin: true,
 		Suspended:                 plan.Suspended.ValueBool(),
 		Archived:                  plan.Archived.ValueBool(),
+		ForceSendFields:           []string{"Suspended", "Archived"},
 	}
 	if !plan.OrgUnitPath.IsNull() && !plan.OrgUnitPath.IsUnknown() {
 		user.OrgUnitPath = plan.OrgUnitPath.ValueString()
