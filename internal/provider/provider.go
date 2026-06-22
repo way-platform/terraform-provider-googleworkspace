@@ -2,9 +2,7 @@ package provider
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -13,7 +11,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/google"
 	"google.golang.org/api/impersonate"
 	"google.golang.org/api/option"
 )
@@ -25,13 +22,12 @@ type googleworkspaceProvider struct {
 }
 
 type googleworkspaceProviderModel struct {
-	AccessToken         types.String `tfsdk:"access_token"`
-	ServiceAccountKey   types.String `tfsdk:"service_account_key"`
-	ServiceAccount      types.String `tfsdk:"service_account"`
-	ImpersonatedUser    types.String `tfsdk:"impersonated_user_email"`
-	CustomerID          types.String `tfsdk:"customer_id"`
-	OAuthScopes         types.List   `tfsdk:"oauth_scopes"`
-	RetryOn             types.List   `tfsdk:"retry_on"`
+	AccessToken      types.String `tfsdk:"access_token"`
+	ServiceAccount   types.String `tfsdk:"service_account"`
+	ImpersonatedUser types.String `tfsdk:"impersonated_user_email"`
+	CustomerID       types.String `tfsdk:"customer_id"`
+	OAuthScopes      types.List   `tfsdk:"oauth_scopes"`
+	RetryOn          types.List   `tfsdk:"retry_on"`
 }
 
 func (p *googleworkspaceProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
@@ -48,11 +44,6 @@ func (p *googleworkspaceProvider) Schema(ctx context.Context, req provider.Schem
 				MarkdownDescription: `A pre-minted OAuth2 access token. When set, the provider uses
 impersonate.CredentialsTokenSource with this token as the base credential to
 impersonate the service_account with Domain-Wide Delegation.`,
-			},
-			"service_account_key": schema.StringAttribute{
-				Optional:  true,
-				Sensitive: true,
-				MarkdownDescription: `The path to or the content of a Service Account key JSON file.`,
 			},
 			"service_account": schema.StringAttribute{
 				Optional:            true,
@@ -90,10 +81,6 @@ func (p *googleworkspaceProvider) Configure(ctx context.Context, req provider.Co
 	}
 
 	accessToken := data.AccessToken.ValueString()
-	serviceAccountKey := data.ServiceAccountKey.ValueString()
-	if serviceAccountKey == "" {
-		serviceAccountKey = os.Getenv("SERVICE_ACCOUNT_KEY")
-	}
 	serviceAccount := data.ServiceAccount.ValueString()
 	if serviceAccount == "" {
 		serviceAccount = os.Getenv("SERVICE_ACCOUNT")
@@ -141,12 +128,13 @@ func (p *googleworkspaceProvider) Configure(ctx context.Context, req provider.Co
 
 	var tokenSource oauth2.TokenSource
 
+	if serviceAccount == "" {
+		resp.Diagnostics.AddError("Configuration Error", "service_account is required")
+		return
+	}
+
 	switch {
 	case accessToken != "":
-		if serviceAccount == "" {
-			resp.Diagnostics.AddError("Configuration Error", "service_account is required when using access_token")
-			return
-		}
 		token := &oauth2.Token{AccessToken: accessToken}
 		ts, err := impersonate.CredentialsTokenSource(ctx, impersonate.CredentialsConfig{
 			TargetPrincipal: serviceAccount,
@@ -159,37 +147,7 @@ func (p *googleworkspaceProvider) Configure(ctx context.Context, req provider.Co
 		}
 		tokenSource = ts
 
-	case serviceAccountKey != "":
-		var saKey []byte
-		s := []byte(serviceAccountKey)
-		if json.Valid(s) {
-			saKey = s
-		} else {
-			f, err := os.Open(serviceAccountKey)
-			if err != nil {
-				resp.Diagnostics.AddError("Configuration Error", fmt.Sprintf("Unable to open Service Account Key file: %s", err))
-				return
-			}
-			defer f.Close()
-			saKey, err = io.ReadAll(f)
-			if err != nil {
-				resp.Diagnostics.AddError("Configuration Error", fmt.Sprintf("Unable to read Service Account Key file: %s", err))
-				return
-			}
-		}
-		conf, err := google.JWTConfigFromJSON(saKey, scopes...)
-		if err != nil {
-			resp.Diagnostics.AddError("Configuration Error", fmt.Sprintf("Unable to parse Service Account Key: %s", err))
-			return
-		}
-		conf.Subject = subject
-		tokenSource = conf.TokenSource(ctx)
-
 	default:
-		if serviceAccount == "" {
-			resp.Diagnostics.AddError("Configuration Error", "service_account is required when using ADC")
-			return
-		}
 		ts, err := impersonate.CredentialsTokenSource(ctx, impersonate.CredentialsConfig{
 			TargetPrincipal: serviceAccount,
 			Scopes:          scopes,
