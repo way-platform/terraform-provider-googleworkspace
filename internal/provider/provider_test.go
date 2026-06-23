@@ -50,5 +50,7 @@ func setupTestClient(t *testing.T, server *httptest.Server) {
 func jsonResponse(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(body)
+	if err := json.NewEncoder(w).Encode(body); err != nil {
+		panic("jsonResponse: " + err.Error())
+	}
 }
