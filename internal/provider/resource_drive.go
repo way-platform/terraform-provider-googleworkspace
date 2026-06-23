@@ -160,6 +160,7 @@ func (r *driveResource) Create(ctx context.Context, req resource.CreateRequest, 
 		// Retry with backoff: the Drive API has eventual consistency after creation.
 		for attempt := 0; ; attempt++ {
 			_, err = driveSvc.Drives.Update(created.Id, updateReq).
+				UseDomainAdminAccess(plan.UseDomainAdminAccess.ValueBool()).
 				Fields("id,name,restrictions").
 				Do()
 			if err == nil {

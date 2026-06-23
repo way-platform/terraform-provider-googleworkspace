@@ -122,13 +122,13 @@ resource "googleworkspace_drive" "test" {
 	}
 }
 
-func TestAccDrive_CreateWithRestrictionsRetriesWithoutDomainAdminAccess(t *testing.T) {
+func TestAccDrive_CreateWithRestrictionsRetriesWithDomainAdminAccess(t *testing.T) {
 	origDelay := driveRestrictionRetryDelay
 	driveRestrictionRetryDelay = func(int) time.Duration { return 0 }
 	defer func() { driveRestrictionRetryDelay = origDelay }()
 
 	var patchCount atomic.Int32
-	var sawDomainAdminAccess atomic.Bool
+	var missingDomainAdminAccess atomic.Bool
 
 	server := setupTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -140,8 +140,8 @@ func TestAccDrive_CreateWithRestrictionsRetriesWithoutDomainAdminAccess(t *testi
 			})
 
 		case r.Method == "PATCH" && strings.Contains(r.URL.Path, "/drives/drive-retry"):
-			if r.URL.Query().Get("useDomainAdminAccess") != "" {
-				sawDomainAdminAccess.Store(true)
+			if r.URL.Query().Get("useDomainAdminAccess") != "true" {
+				missingDomainAdminAccess.Store(true)
 			}
 			if patchCount.Add(1) == 1 {
 				jsonResponse(w, 404, map[string]any{
@@ -217,8 +217,8 @@ resource "googleworkspace_drive" "test" {
 	if patchCount.Load() != 2 {
 		t.Fatalf("expected 2 restriction update attempts, got %d", patchCount.Load())
 	}
-	if sawDomainAdminAccess.Load() {
-		t.Fatal("create-time restriction update should not use domain admin access")
+	if missingDomainAdminAccess.Load() {
+		t.Fatal("create-time restriction update should use domain admin access")
 	}
 }
 
@@ -229,7 +229,7 @@ func TestAccDrive_CreateWithRestrictionsExhaustsRetryAfterSavingState(t *testing
 
 	var patchCount atomic.Int32
 	var deleteCount atomic.Int32
-	var sawDomainAdminAccess atomic.Bool
+	var missingDomainAdminAccess atomic.Bool
 
 	server := setupTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -241,8 +241,8 @@ func TestAccDrive_CreateWithRestrictionsExhaustsRetryAfterSavingState(t *testing
 			})
 
 		case r.Method == "PATCH" && strings.Contains(r.URL.Path, "/drives/drive-partial"):
-			if r.URL.Query().Get("useDomainAdminAccess") != "" {
-				sawDomainAdminAccess.Store(true)
+			if r.URL.Query().Get("useDomainAdminAccess") != "true" {
+				missingDomainAdminAccess.Store(true)
 			}
 			patchCount.Add(1)
 			jsonResponse(w, 404, map[string]any{
@@ -296,8 +296,8 @@ resource "googleworkspace_drive" "test" {
 	if deleteCount.Load() != 1 {
 		t.Fatalf("expected cleanup delete for partial create, got %d", deleteCount.Load())
 	}
-	if sawDomainAdminAccess.Load() {
-		t.Fatal("create-time restriction update should not use domain admin access")
+	if missingDomainAdminAccess.Load() {
+		t.Fatal("create-time restriction update should use domain admin access")
 	}
 }
 
