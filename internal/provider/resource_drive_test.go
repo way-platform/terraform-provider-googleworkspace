@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 )
@@ -117,6 +118,106 @@ resource "googleworkspace_drive" "test" {
 		} else if val != false {
 			t.Errorf("expected %q to be false, got %v", field, val)
 		}
+	}
+}
+
+func TestAccDrive_CreateWithRestrictionsRetriesWithoutDomainAdminAccess(t *testing.T) {
+	origDelay := driveRestrictionRetryDelay
+	driveRestrictionRetryDelay = func(int) time.Duration { return 0 }
+	defer func() { driveRestrictionRetryDelay = origDelay }()
+
+	var patchCount atomic.Int32
+	var sawDomainAdminAccess atomic.Bool
+
+	server := setupTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/drives"):
+			jsonResponse(w, 200, map[string]any{
+				"kind": "drive#drive",
+				"id":   "drive-retry",
+				"name": "Retry",
+			})
+
+		case r.Method == "PATCH" && strings.Contains(r.URL.Path, "/drives/drive-retry"):
+			if r.URL.Query().Get("useDomainAdminAccess") != "" {
+				sawDomainAdminAccess.Store(true)
+			}
+			if patchCount.Add(1) == 1 {
+				jsonResponse(w, 404, map[string]any{
+					"error": map[string]any{
+						"code":    404,
+						"message": "Shared drive not found: drive-retry",
+						"status":  "NOT_FOUND",
+					},
+				})
+				return
+			}
+			jsonResponse(w, 200, map[string]any{
+				"kind": "drive#drive",
+				"id":   "drive-retry",
+				"name": "Retry",
+				"restrictions": map[string]any{
+					"adminManagedRestrictions":                  true,
+					"copyRequiresWriterPermission":              false,
+					"domainUsersOnly":                           false,
+					"driveMembersOnly":                          true,
+					"sharingFoldersRequiresOrganizerPermission": false,
+				},
+			})
+
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "/drives/drive-retry"):
+			jsonResponse(w, 200, map[string]any{
+				"kind": "drive#drive",
+				"id":   "drive-retry",
+				"name": "Retry",
+				"restrictions": map[string]any{
+					"adminManagedRestrictions":                  true,
+					"copyRequiresWriterPermission":              false,
+					"domainUsersOnly":                           false,
+					"driveMembersOnly":                          true,
+					"sharingFoldersRequiresOrganizerPermission": false,
+				},
+			})
+
+		case r.Method == "DELETE" && strings.Contains(r.URL.Path, "/drives/drive-retry"):
+			w.WriteHeader(204)
+
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(500)
+		}
+	}))
+	setupTestClient(t, server)
+
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testProviderConfig + `
+resource "googleworkspace_drive" "test" {
+  name                    = "Retry"
+  use_domain_admin_access = true
+
+  restrictions {
+    admin_managed_restrictions = true
+    drive_members_only         = true
+  }
+}
+`,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("googleworkspace_drive.test", "id", "drive-retry"),
+					resource.TestCheckResourceAttr("googleworkspace_drive.test", "restrictions.admin_managed_restrictions", "true"),
+					resource.TestCheckResourceAttr("googleworkspace_drive.test", "restrictions.drive_members_only", "true"),
+				),
+			},
+		},
+	})
+
+	if patchCount.Load() != 2 {
+		t.Fatalf("expected 2 restriction update attempts, got %d", patchCount.Load())
+	}
+	if sawDomainAdminAccess.Load() {
+		t.Fatal("create-time restriction update should not use domain admin access")
 	}
 }
 
