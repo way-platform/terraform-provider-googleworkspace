@@ -190,13 +190,20 @@ func (r *driveResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	state.Name = types.StringValue(d.Name)
 	state.Id = types.StringValue(d.Id)
 
-	if d.Restrictions != nil && state.Restrictions != nil {
-		state.Restrictions = &driveRestrictionsModel{
-			AdminManagedRestrictions:                  types.BoolValue(d.Restrictions.AdminManagedRestrictions),
-			CopyRequiresWriterPermission:              types.BoolValue(d.Restrictions.CopyRequiresWriterPermission),
-			DomainUsersOnly:                           types.BoolValue(d.Restrictions.DomainUsersOnly),
-			DriveMembersOnly:                          types.BoolValue(d.Restrictions.DriveMembersOnly),
-			SharingFoldersRequiresOrganizerPermission: types.BoolValue(d.Restrictions.SharingFoldersRequiresOrganizerPermission),
+	if d.Restrictions != nil {
+		hasRestrictions := d.Restrictions.AdminManagedRestrictions ||
+			d.Restrictions.CopyRequiresWriterPermission ||
+			d.Restrictions.DomainUsersOnly ||
+			d.Restrictions.DriveMembersOnly ||
+			d.Restrictions.SharingFoldersRequiresOrganizerPermission
+		if hasRestrictions || state.Restrictions != nil {
+			state.Restrictions = &driveRestrictionsModel{
+				AdminManagedRestrictions:                  types.BoolValue(d.Restrictions.AdminManagedRestrictions),
+				CopyRequiresWriterPermission:              types.BoolValue(d.Restrictions.CopyRequiresWriterPermission),
+				DomainUsersOnly:                           types.BoolValue(d.Restrictions.DomainUsersOnly),
+				DriveMembersOnly:                          types.BoolValue(d.Restrictions.DriveMembersOnly),
+				SharingFoldersRequiresOrganizerPermission: types.BoolValue(d.Restrictions.SharingFoldersRequiresOrganizerPermission),
+			}
 		}
 	}
 

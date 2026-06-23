@@ -206,3 +206,74 @@ resource "googleworkspace_group" "test" {
 		},
 	})
 }
+
+func TestAccGroup_ClearDescription(t *testing.T) {
+	step := 0
+
+	server := setupTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/admin/directory/v1/groups"):
+			jsonResponse(w, 200, map[string]any{
+				"kind":        "admin#directory#group",
+				"id":          "group-desc",
+				"email":       "desc@way.cloud",
+				"name":        "Desc Group",
+				"description": "Initial description",
+			})
+
+		case r.Method == "PUT" && strings.Contains(r.URL.Path, "/admin/directory/v1/groups/group-desc"):
+			step++
+			jsonResponse(w, 200, map[string]any{
+				"kind":  "admin#directory#group",
+				"id":    "group-desc",
+				"email": "desc@way.cloud",
+				"name":  "Desc Group",
+			})
+
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "/admin/directory/v1/groups/group-desc"):
+			resp := map[string]any{
+				"kind":  "admin#directory#group",
+				"id":    "group-desc",
+				"email": "desc@way.cloud",
+				"name":  "Desc Group",
+			}
+			if step == 0 {
+				resp["description"] = "Initial description"
+			}
+			jsonResponse(w, 200, resp)
+
+		case r.Method == "DELETE" && strings.Contains(r.URL.Path, "/admin/directory/v1/groups/group-desc"):
+			w.WriteHeader(204)
+
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(500)
+		}
+	}))
+	setupTestClient(t, server)
+
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testProviderConfig + `
+resource "googleworkspace_group" "test" {
+  email       = "desc@way.cloud"
+  name        = "Desc Group"
+  description = "Initial description"
+}
+`,
+				Check: resource.TestCheckResourceAttr("googleworkspace_group.test", "description", "Initial description"),
+			},
+			{
+				Config: testProviderConfig + `
+resource "googleworkspace_group" "test" {
+  email = "desc@way.cloud"
+  name  = "Desc Group"
+}
+`,
+				Check: resource.TestCheckNoResourceAttr("googleworkspace_group.test", "description"),
+			},
+		},
+	})
+}
