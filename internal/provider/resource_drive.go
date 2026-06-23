@@ -135,6 +135,10 @@ func (r *driveResource) Create(ctx context.Context, req resource.CreateRequest, 
 	}
 
 	plan.Id = types.StringValue(created.Id)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	if plan.Restrictions != nil {
 		updateReq := &drive.Drive{
