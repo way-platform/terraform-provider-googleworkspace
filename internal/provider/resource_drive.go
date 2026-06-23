@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/hashicorp/go-uuid"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -18,6 +19,10 @@ var (
 	_ resource.ResourceWithImportState = &driveResource{}
 )
 
+var driveRestrictionRetryDelay = func(attempt int) time.Duration {
+	return time.Duration(attempt+1) * 2 * time.Second
+}
+
 func newDrive() resource.Resource { return &driveResource{} }
 
 type driveResource struct {
@@ -25,11 +30,11 @@ type driveResource struct {
 }
 
 type driveRestrictionsModel struct {
-	AdminManagedRestrictions                      types.Bool `tfsdk:"admin_managed_restrictions"`
-	CopyRequiresWriterPermission                  types.Bool `tfsdk:"copy_requires_writer_permission"`
-	DomainUsersOnly                               types.Bool `tfsdk:"domain_users_only"`
-	DriveMembersOnly                              types.Bool `tfsdk:"drive_members_only"`
-	SharingFoldersRequiresOrganizerPermission     types.Bool `tfsdk:"sharing_folders_requires_organizer_permission"`
+	AdminManagedRestrictions                  types.Bool `tfsdk:"admin_managed_restrictions"`
+	CopyRequiresWriterPermission              types.Bool `tfsdk:"copy_requires_writer_permission"`
+	DomainUsersOnly                           types.Bool `tfsdk:"domain_users_only"`
+	DriveMembersOnly                          types.Bool `tfsdk:"drive_members_only"`
+	SharingFoldersRequiresOrganizerPermission types.Bool `tfsdk:"sharing_folders_requires_organizer_permission"`
 }
 
 type driveResourceModel struct {
@@ -148,11 +153,23 @@ func (r *driveResource) Create(ctx context.Context, req resource.CreateRequest, 
 				},
 			},
 		}
-		_, err = driveSvc.Drives.Update(created.Id, updateReq).
-			UseDomainAdminAccess(plan.UseDomainAdminAccess.ValueBool()).
-			Fields("id,name,restrictions").
-			Do()
-		if err != nil {
+		// Retry with backoff: the Drive API has eventual consistency after creation.
+		for attempt := 0; ; attempt++ {
+			_, err = driveSvc.Drives.Update(created.Id, updateReq).
+				Fields("id,name,restrictions").
+				Do()
+			if err == nil {
+				break
+			}
+			if gerr, ok := err.(*googleapi.Error); ok && gerr.Code == 404 && attempt < 5 {
+				select {
+				case <-ctx.Done():
+					resp.Diagnostics.AddError("Context Cancelled", "Operation cancelled while waiting for drive to become available")
+					return
+				case <-time.After(driveRestrictionRetryDelay(attempt)):
+				}
+				continue
+			}
 			resp.Diagnostics.AddError("API Error", fmt.Sprintf("Unable to update drive restrictions: %s", err))
 			return
 		}
