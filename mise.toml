@@ -1,6 +1,8 @@
 [tools]
 go = "1.26"
 golangci-lint = "2.12"
+goreleaser = "2"
+"go:github.com/go-semantic-release/semantic-release/v2/cmd/semantic-release" = "2.31"
 
 [tasks.build]
 description = "Full CI pipeline"
@@ -25,7 +27,11 @@ run = "go mod tidy -v"
 [tasks.diff]
 description = "check for git diffs"
 run = """
-if git rev-parse --is-inside-work-tree &>/dev/null; then
+if git rev-parse --is-inside-work-tree &>/dev/null && ! jj root &>/dev/null; then
   git diff --exit-code
 fi
 """
+
+[tasks.release]
+description = "create semver release from conventional commits"
+run = "semantic-release --hooks goreleaser --allow-initial-development-versions"
