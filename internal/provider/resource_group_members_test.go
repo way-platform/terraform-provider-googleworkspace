@@ -21,7 +21,11 @@ func TestAccGroupMembers_Create(t *testing.T) {
 		case r.Method == "POST" && strings.Contains(r.URL.Path, "/groups/group-001/members"):
 			body, _ := io.ReadAll(r.Body)
 			var member map[string]any
-			json.Unmarshal(body, &member)
+			if err := json.Unmarshal(body, &member); err != nil {
+				t.Errorf("failed to unmarshal request: %v", err)
+				w.WriteHeader(500)
+				return
+			}
 			mu.Lock()
 			insertedMembers = append(insertedMembers, member)
 			mu.Unlock()
@@ -113,7 +117,11 @@ func TestAccGroupMembers_Update(t *testing.T) {
 		case r.Method == "POST" && strings.Contains(r.URL.Path, "/groups/group-002/members"):
 			body, _ := io.ReadAll(r.Body)
 			var member map[string]any
-			json.Unmarshal(body, &member)
+			if err := json.Unmarshal(body, &member); err != nil {
+				t.Errorf("failed to unmarshal request: %v", err)
+				w.WriteHeader(500)
+				return
+			}
 			email := member["email"].(string)
 			currentMembers[email] = member
 			insertedEmails = append(insertedEmails, email)
@@ -148,7 +156,11 @@ func TestAccGroupMembers_Update(t *testing.T) {
 			email := parts[len(parts)-1]
 			body, _ := io.ReadAll(r.Body)
 			var member map[string]any
-			json.Unmarshal(body, &member)
+			if err := json.Unmarshal(body, &member); err != nil {
+				t.Errorf("failed to unmarshal request: %v", err)
+				w.WriteHeader(500)
+				return
+			}
 			if m, ok := currentMembers[email]; ok {
 				m["role"] = member["role"]
 				currentMembers[email] = m

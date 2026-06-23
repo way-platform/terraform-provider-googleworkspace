@@ -140,7 +140,11 @@ func TestAccDrive_UpdateRestrictions(t *testing.T) {
 
 			// Return whatever restrictions are in the request
 			var req map[string]any
-			json.Unmarshal(body, &req)
+			if err := json.Unmarshal(body, &req); err != nil {
+				t.Errorf("failed to unmarshal request: %v", err)
+				w.WriteHeader(500)
+				return
+			}
 			resp := map[string]any{
 				"kind": "drive#drive",
 				"id":   "drive-456",
