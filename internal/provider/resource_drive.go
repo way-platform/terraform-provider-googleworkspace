@@ -276,6 +276,9 @@ func (r *driveResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 		UseDomainAdminAccess(state.UseDomainAdminAccess.ValueBool()).
 		Do()
 	if err != nil {
+		if gerr, ok := err.(*googleapi.Error); ok && gerr.Code == 404 {
+			return
+		}
 		resp.Diagnostics.AddError("API Error", fmt.Sprintf("Unable to delete drive: %s", err))
 		return
 	}

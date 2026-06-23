@@ -11,6 +11,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	directory "google.golang.org/api/admin/directory/v1"
+	"google.golang.org/api/googleapi"
 )
 
 var (
@@ -144,6 +145,10 @@ func (r *userResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 
 	user, err := svc.Users.Get(state.Id.ValueString()).Projection("full").Do()
 	if err != nil {
+		if gerr, ok := err.(*googleapi.Error); ok && gerr.Code == 404 {
+			resp.State.RemoveResource(ctx)
+			return
+		}
 		resp.Diagnostics.AddError("API Error", fmt.Sprintf("Unable to read user: %s", err))
 		return
 	}
@@ -213,6 +218,9 @@ func (r *userResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 
 	err = svc.Users.Delete(state.Id.ValueString()).Do()
 	if err != nil {
+		if gerr, ok := err.(*googleapi.Error); ok && gerr.Code == 404 {
+			return
+		}
 		resp.Diagnostics.AddError("API Error", fmt.Sprintf("Unable to delete user: %s", err))
 		return
 	}
