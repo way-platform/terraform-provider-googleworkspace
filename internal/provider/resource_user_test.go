@@ -291,3 +291,4 @@ resource "googleworkspace_user" "test" {
 		},
 	})
 }
+

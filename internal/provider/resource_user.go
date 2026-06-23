@@ -237,32 +237,41 @@ func (r *userResource) UpgradeState(_ context.Context) map[int64]resource.StateU
 	return map[int64]resource.StateUpgrader{
 		0: {
 			StateUpgrader: func(ctx context.Context, req resource.UpgradeStateRequest, resp *resource.UpgradeStateResponse) {
-				var rawState map[string]json.RawMessage
-				if err := json.Unmarshal(req.RawState.JSON, &rawState); err != nil {
+				var raw map[string]json.RawMessage
+				if err := json.Unmarshal(req.RawState.JSON, &raw); err != nil {
 					resp.Diagnostics.AddError("State Upgrade Error", fmt.Sprintf("Unable to parse raw state: %s", err))
 					return
 				}
 
-				// The old hashicorp provider stores name as a list: [{"given_name":..., "family_name":...}]
-				// Our schema expects an object: {"given_name":..., "family_name":...}
-				if nameRaw, ok := rawState["name"]; ok {
+				var id, primaryEmail, orgUnitPath string
+				var suspended, archived bool
+
+				_ = json.Unmarshal(raw["id"], &id)
+				_ = json.Unmarshal(raw["primary_email"], &primaryEmail)
+				_ = json.Unmarshal(raw["org_unit_path"], &orgUnitPath)
+				_ = json.Unmarshal(raw["suspended"], &suspended)
+				_ = json.Unmarshal(raw["archived"], &archived)
+
+				// The old provider stores name as a list: [{"given_name":..., "family_name":...}]
+				var givenName, familyName string
+				if nameRaw, ok := raw["name"]; ok {
 					var nameList []map[string]string
 					if err := json.Unmarshal(nameRaw, &nameList); err == nil && len(nameList) > 0 {
-						nameObj, _ := json.Marshal(nameList[0])
-						rawState["name"] = nameObj
+						givenName = nameList[0]["given_name"]
+						familyName = nameList[0]["family_name"]
 					}
 				}
 
-				upgraded, err := json.Marshal(rawState)
-				if err != nil {
-					resp.Diagnostics.AddError("State Upgrade Error", fmt.Sprintf("Unable to marshal upgraded state: %s", err))
-					return
-				}
-
-				var state userResourceModel
-				if err := json.Unmarshal(upgraded, &state); err != nil {
-					resp.Diagnostics.AddError("State Upgrade Error", fmt.Sprintf("Unable to unmarshal into model: %s", err))
-					return
+				state := userResourceModel{
+					Id:           types.StringValue(id),
+					PrimaryEmail: types.StringValue(primaryEmail),
+					OrgUnitPath:  types.StringValue(orgUnitPath),
+					Suspended:    types.BoolValue(suspended),
+					Archived:     types.BoolValue(archived),
+					Name: &userNameModel{
+						GivenName:  types.StringValue(givenName),
+						FamilyName: types.StringValue(familyName),
+					},
 				}
 
 				resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
