@@ -111,7 +111,7 @@ func (r *orgUnitResource) Read(ctx context.Context, req resource.ReadRequest, re
 		return
 	}
 
-	ou, err := svc.Orgunits.Get(r.client.customerID, "id:"+state.Id.ValueString()).Do()
+	ou, err := svc.Orgunits.Get(r.client.customerID, orgUnitAPIPath(state.Id.ValueString())).Do()
 	if err != nil {
 		if gerr, ok := err.(*googleapi.Error); ok && gerr.Code == 404 {
 			resp.State.RemoveResource(ctx)
@@ -151,7 +151,7 @@ func (r *orgUnitResource) Update(ctx context.Context, req resource.UpdateRequest
 		Description: plan.Description.ValueString(),
 	}
 
-	updated, err := svc.Orgunits.Update(r.client.customerID, "id:"+plan.Id.ValueString(), ou).Do()
+	updated, err := svc.Orgunits.Update(r.client.customerID, orgUnitAPIPath(plan.Id.ValueString()), ou).Do()
 	if err != nil {
 		resp.Diagnostics.AddError("API Error", fmt.Sprintf("Unable to update org unit: %s", err))
 		return
@@ -175,7 +175,7 @@ func (r *orgUnitResource) Delete(ctx context.Context, req resource.DeleteRequest
 		return
 	}
 
-	err = svc.Orgunits.Delete(r.client.customerID, "id:"+state.Id.ValueString()).Do()
+	err = svc.Orgunits.Delete(r.client.customerID, orgUnitAPIPath(state.Id.ValueString())).Do()
 	if err != nil {
 		if gerr, ok := err.(*googleapi.Error); ok && gerr.Code == 404 {
 			return

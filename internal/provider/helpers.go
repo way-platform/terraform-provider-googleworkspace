@@ -23,6 +23,10 @@ func rsId() schema.StringAttribute {
 	}
 }
 
+func orgUnitAPIPath(id string) string {
+	return "id:" + strings.TrimPrefix(id, "id:")
+}
+
 func importSplitId(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse, boolAttr, idAttr string) {
 	parts := strings.SplitN(req.ID, ",", 2)
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {

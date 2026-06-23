@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/hashicorp/go-uuid"
@@ -15,8 +16,9 @@ import (
 )
 
 var (
-	_ resource.Resource                = &userResource{}
-	_ resource.ResourceWithImportState = &userResource{}
+	_ resource.Resource                   = &userResource{}
+	_ resource.ResourceWithImportState    = &userResource{}
+	_ resource.ResourceWithUpgradeState   = &userResource{}
 )
 
 func newUser() resource.Resource { return &userResource{} }
@@ -45,6 +47,7 @@ func (r *userResource) Metadata(_ context.Context, req resource.MetadataRequest,
 
 func (r *userResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
+		Version: 1,
 		Attributes: map[string]schema.Attribute{
 			"id":            rsId(),
 			"primary_email": schema.StringAttribute{Required: true},
@@ -228,4 +231,42 @@ func (r *userResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 
 func (r *userResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+func (r *userResource) UpgradeState(_ context.Context) map[int64]resource.StateUpgrader {
+	return map[int64]resource.StateUpgrader{
+		0: {
+			StateUpgrader: func(ctx context.Context, req resource.UpgradeStateRequest, resp *resource.UpgradeStateResponse) {
+				var rawState map[string]json.RawMessage
+				if err := json.Unmarshal(req.RawState.JSON, &rawState); err != nil {
+					resp.Diagnostics.AddError("State Upgrade Error", fmt.Sprintf("Unable to parse raw state: %s", err))
+					return
+				}
+
+				// The old hashicorp provider stores name as a list: [{"given_name":..., "family_name":...}]
+				// Our schema expects an object: {"given_name":..., "family_name":...}
+				if nameRaw, ok := rawState["name"]; ok {
+					var nameList []map[string]string
+					if err := json.Unmarshal(nameRaw, &nameList); err == nil && len(nameList) > 0 {
+						nameObj, _ := json.Marshal(nameList[0])
+						rawState["name"] = nameObj
+					}
+				}
+
+				upgraded, err := json.Marshal(rawState)
+				if err != nil {
+					resp.Diagnostics.AddError("State Upgrade Error", fmt.Sprintf("Unable to marshal upgraded state: %s", err))
+					return
+				}
+
+				var state userResourceModel
+				if err := json.Unmarshal(upgraded, &state); err != nil {
+					resp.Diagnostics.AddError("State Upgrade Error", fmt.Sprintf("Unable to unmarshal into model: %s", err))
+					return
+				}
+
+				resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+			},
+		},
+	}
 }
