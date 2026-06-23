@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -215,6 +216,85 @@ resource "googleworkspace_drive" "test" {
 
 	if patchCount.Load() != 2 {
 		t.Fatalf("expected 2 restriction update attempts, got %d", patchCount.Load())
+	}
+	if sawDomainAdminAccess.Load() {
+		t.Fatal("create-time restriction update should not use domain admin access")
+	}
+}
+
+func TestAccDrive_CreateWithRestrictionsExhaustsRetryAfterSavingState(t *testing.T) {
+	origDelay := driveRestrictionRetryDelay
+	driveRestrictionRetryDelay = func(int) time.Duration { return 0 }
+	defer func() { driveRestrictionRetryDelay = origDelay }()
+
+	var patchCount atomic.Int32
+	var deleteCount atomic.Int32
+	var sawDomainAdminAccess atomic.Bool
+
+	server := setupTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/drives"):
+			jsonResponse(w, 200, map[string]any{
+				"kind": "drive#drive",
+				"id":   "drive-partial",
+				"name": "Partial",
+			})
+
+		case r.Method == "PATCH" && strings.Contains(r.URL.Path, "/drives/drive-partial"):
+			if r.URL.Query().Get("useDomainAdminAccess") != "" {
+				sawDomainAdminAccess.Store(true)
+			}
+			patchCount.Add(1)
+			jsonResponse(w, 404, map[string]any{
+				"error": map[string]any{
+					"code":    404,
+					"message": "Shared drive not found: drive-partial",
+					"status":  "NOT_FOUND",
+				},
+			})
+
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "/drives/drive-partial"):
+			jsonResponse(w, 200, map[string]any{
+				"kind": "drive#drive",
+				"id":   "drive-partial",
+				"name": "Partial",
+			})
+
+		case r.Method == "DELETE" && strings.Contains(r.URL.Path, "/drives/drive-partial"):
+			deleteCount.Add(1)
+			w.WriteHeader(204)
+
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(500)
+		}
+	}))
+	setupTestClient(t, server)
+
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testProviderConfig + `
+resource "googleworkspace_drive" "test" {
+  name                    = "Partial"
+  use_domain_admin_access = true
+
+  restrictions {
+    drive_members_only = true
+  }
+}
+`,
+				ExpectError: regexp.MustCompile(`Unable to update drive restrictions`),
+			},
+		},
+	})
+
+	if patchCount.Load() != 6 {
+		t.Fatalf("expected 6 restriction update attempts, got %d", patchCount.Load())
+	}
+	if deleteCount.Load() != 1 {
+		t.Fatalf("expected cleanup delete for partial create, got %d", deleteCount.Load())
 	}
 	if sawDomainAdminAccess.Load() {
 		t.Fatal("create-time restriction update should not use domain admin access")
