@@ -207,6 +207,62 @@ resource "googleworkspace_group" "test" {
 	})
 }
 
+func TestAccGroup_AliasesOrderIndependent(t *testing.T) {
+	server := setupTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/admin/directory/v1/groups"):
+			jsonResponse(w, 200, map[string]any{
+				"kind":  "admin#directory#group",
+				"id":    "group-alias",
+				"email": "team@wayplatform.com",
+				"name":  "Way Team",
+			})
+
+		case r.Method == "POST" && strings.Contains(r.URL.Path, "/aliases"):
+			jsonResponse(w, 200, map[string]any{"alias": "ok"})
+
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "/admin/directory/v1/groups/group-alias"):
+			// API returns aliases in a different order than config
+			jsonResponse(w, 200, map[string]any{
+				"kind":    "admin#directory#group",
+				"id":      "group-alias",
+				"email":   "team@wayplatform.com",
+				"name":    "Way Team",
+				"aliases": []string{"team@waydata.io", "team@way.cloud"},
+			})
+
+		case r.Method == "DELETE" && strings.Contains(r.URL.Path, "/admin/directory/v1/groups/group-alias"):
+			w.WriteHeader(204)
+
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(500)
+		}
+	}))
+	setupTestClient(t, server)
+
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				// Config has aliases in alphabetical order
+				Config: testProviderConfig + `
+resource "googleworkspace_group" "test" {
+  email   = "team@wayplatform.com"
+  name    = "Way Team"
+  aliases = ["team@way.cloud", "team@waydata.io"]
+}
+`,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("googleworkspace_group.test", "aliases.#", "2"),
+					resource.TestCheckResourceAttr("googleworkspace_group.test", "aliases.0", "team@way.cloud"),
+					resource.TestCheckResourceAttr("googleworkspace_group.test", "aliases.1", "team@waydata.io"),
+				),
+			},
+		},
+	})
+}
+
 func TestAccGroup_ClearDescription(t *testing.T) {
 	step := 0
 
