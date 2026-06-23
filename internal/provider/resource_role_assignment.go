@@ -2,8 +2,10 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -16,8 +18,9 @@ import (
 )
 
 var (
-	_ resource.Resource                = &roleAssignmentResource{}
-	_ resource.ResourceWithImportState = &roleAssignmentResource{}
+	_ resource.Resource                 = &roleAssignmentResource{}
+	_ resource.ResourceWithImportState  = &roleAssignmentResource{}
+	_ resource.ResourceWithUpgradeState = &roleAssignmentResource{}
 )
 
 func newRoleAssignment() resource.Resource { return &roleAssignmentResource{} }
@@ -41,6 +44,7 @@ func (r *roleAssignmentResource) Metadata(_ context.Context, req resource.Metada
 func (r *roleAssignmentResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	forceNew := []planmodifier.String{stringplanmodifier.RequiresReplace()}
 	resp.Schema = schema.Schema{
+		Version: 1,
 		Attributes: map[string]schema.Attribute{
 			"id": rsId(),
 			"role_id": schema.StringAttribute{
@@ -95,11 +99,18 @@ func (r *roleAssignmentResource) Create(ctx context.Context, req resource.Create
 		return
 	}
 
+	scopeType := strings.ToUpper(plan.ScopeType.ValueString())
+	orgUnitId := strings.TrimPrefix(plan.OrgUnitId.ValueString(), "id:")
+	if scopeType == "ORG_UNIT" && orgUnitId == "" {
+		resp.Diagnostics.AddError("Value Error", "org_unit_id must be set when scope_type is ORG_UNIT")
+		return
+	}
+
 	assignment := &directory.RoleAssignment{
 		RoleId:     roleId,
 		AssignedTo: plan.AssignedTo.ValueString(),
-		ScopeType:  plan.ScopeType.ValueString(),
-		OrgUnitId:  plan.OrgUnitId.ValueString(),
+		ScopeType:  scopeType,
+		OrgUnitId:  orgUnitId,
 	}
 
 	created, err := svc.RoleAssignments.Insert(r.client.customerID, assignment).Do()
@@ -140,9 +151,7 @@ func (r *roleAssignmentResource) Read(ctx context.Context, req resource.ReadRequ
 	state.RoleId = types.StringValue(strconv.FormatInt(ra.RoleId, 10))
 	state.AssignedTo = types.StringValue(ra.AssignedTo)
 	state.ScopeType = types.StringValue(ra.ScopeType)
-	if ra.OrgUnitId != "" {
-		state.OrgUnitId = types.StringValue(ra.OrgUnitId)
-	}
+	state.OrgUnitId = normalizedOrgUnitID(ra.OrgUnitId)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
@@ -176,4 +185,47 @@ func (r *roleAssignmentResource) Delete(ctx context.Context, req resource.Delete
 
 func (r *roleAssignmentResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+func (r *roleAssignmentResource) UpgradeState(_ context.Context) map[int64]resource.StateUpgrader {
+	return map[int64]resource.StateUpgrader{
+		0: {
+			StateUpgrader: func(ctx context.Context, req resource.UpgradeStateRequest, resp *resource.UpgradeStateResponse) {
+				var raw map[string]json.RawMessage
+				if err := json.Unmarshal(req.RawState.JSON, &raw); err != nil {
+					resp.Diagnostics.AddError("State Upgrade Error", fmt.Sprintf("Unable to parse raw state: %s", err))
+					return
+				}
+
+				var id, roleId, assignedTo, scopeType, orgUnitId string
+				_ = json.Unmarshal(raw["id"], &id)
+				_ = json.Unmarshal(raw["role_id"], &roleId)
+				_ = json.Unmarshal(raw["assigned_to"], &assignedTo)
+				_ = json.Unmarshal(raw["scope_type"], &scopeType)
+				_ = json.Unmarshal(raw["org_unit_id"], &orgUnitId)
+
+				if scopeType == "" {
+					scopeType = "CUSTOMER"
+				}
+
+				state := roleAssignmentResourceModel{
+					Id:         types.StringValue(id),
+					RoleId:     types.StringValue(roleId),
+					AssignedTo: types.StringValue(assignedTo),
+					ScopeType:  types.StringValue(scopeType),
+					OrgUnitId:  normalizedOrgUnitID(orgUnitId),
+				}
+
+				resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+			},
+		},
+	}
+}
+
+func normalizedOrgUnitID(id string) types.String {
+	id = strings.TrimPrefix(id, "id:")
+	if id == "" {
+		return types.StringNull()
+	}
+	return types.StringValue(id)
 }
