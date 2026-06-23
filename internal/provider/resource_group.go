@@ -127,6 +127,8 @@ func (r *groupResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	state.Name = types.StringValue(group.Name)
 	if group.Description != "" {
 		state.Description = types.StringValue(group.Description)
+	} else {
+		state.Description = types.StringNull()
 	}
 
 	if len(group.Aliases) > 0 {

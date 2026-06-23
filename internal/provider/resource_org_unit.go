@@ -121,6 +121,8 @@ func (r *orgUnitResource) Read(ctx context.Context, req resource.ReadRequest, re
 	state.ParentOrgUnitPath = types.StringValue(ou.ParentOrgUnitPath)
 	if ou.Description != "" {
 		state.Description = types.StringValue(ou.Description)
+	} else {
+		state.Description = types.StringNull()
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)

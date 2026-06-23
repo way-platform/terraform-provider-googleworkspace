@@ -69,8 +69,8 @@ If unset, uses a default set covering Admin SDK and Drive.`,
 			"retry_on": schema.ListAttribute{
 				Optional:    true,
 				ElementType: types.Int64Type,
-				MarkdownDescription: `HTTP error codes to retry on. Defaults to 404 and 502.
-Always retries 403 rate-limit errors.`,
+				MarkdownDescription: `HTTP error codes to retry on. Defaults to 502.
+Always retries 429, 403 rate-limit errors, and 5xx (except 501).`,
 			},
 		},
 	}
@@ -128,7 +128,7 @@ func (p *googleworkspaceProvider) Configure(ctx context.Context, req provider.Co
 
 	var retryOn []int
 	if data.RetryOn.IsNull() {
-		retryOn = []int{404, 502}
+		retryOn = []int{502}
 	} else {
 		resp.Diagnostics.Append(data.RetryOn.ElementsAs(ctx, &retryOn, false)...)
 		if resp.Diagnostics.HasError() {
