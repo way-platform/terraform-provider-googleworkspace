@@ -12,6 +12,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	directory "google.golang.org/api/admin/directory/v1"
+	"google.golang.org/api/googleapi"
 )
 
 var (
@@ -128,6 +129,10 @@ func (r *roleAssignmentResource) Read(ctx context.Context, req resource.ReadRequ
 
 	ra, err := svc.RoleAssignments.Get(r.client.customerID, state.Id.ValueString()).Do()
 	if err != nil {
+		if gerr, ok := err.(*googleapi.Error); ok && gerr.Code == 404 {
+			resp.State.RemoveResource(ctx)
+			return
+		}
 		resp.Diagnostics.AddError("API Error", fmt.Sprintf("Unable to read role assignment: %s", err))
 		return
 	}
@@ -161,6 +166,9 @@ func (r *roleAssignmentResource) Delete(ctx context.Context, req resource.Delete
 
 	err = svc.RoleAssignments.Delete(r.client.customerID, state.Id.ValueString()).Do()
 	if err != nil {
+		if gerr, ok := err.(*googleapi.Error); ok && gerr.Code == 404 {
+			return
+		}
 		resp.Diagnostics.AddError("API Error", fmt.Sprintf("Unable to delete role assignment: %s", err))
 		return
 	}

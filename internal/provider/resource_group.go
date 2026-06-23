@@ -9,6 +9,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	directory "google.golang.org/api/admin/directory/v1"
+	"google.golang.org/api/googleapi"
 )
 
 var (
@@ -119,6 +120,10 @@ func (r *groupResource) Read(ctx context.Context, req resource.ReadRequest, resp
 
 	group, err := svc.Groups.Get(state.Id.ValueString()).Do()
 	if err != nil {
+		if gerr, ok := err.(*googleapi.Error); ok && gerr.Code == 404 {
+			resp.State.RemoveResource(ctx)
+			return
+		}
 		resp.Diagnostics.AddError("API Error", fmt.Sprintf("Unable to read group: %s", err))
 		return
 	}
@@ -226,6 +231,9 @@ func (r *groupResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 
 	err = svc.Groups.Delete(state.Id.ValueString()).Do()
 	if err != nil {
+		if gerr, ok := err.(*googleapi.Error); ok && gerr.Code == 404 {
+			return
+		}
 		resp.Diagnostics.AddError("API Error", fmt.Sprintf("Unable to delete group: %s", err))
 		return
 	}
