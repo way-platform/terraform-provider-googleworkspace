@@ -10,6 +10,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/groupssettings/v1"
 )
 
@@ -104,6 +105,10 @@ func (r *groupSettingsResource) Read(ctx context.Context, req resource.ReadReque
 
 	settings, err := svc.Groups.Get(state.Email.ValueString()).Do()
 	if err != nil {
+		if gerr, ok := err.(*googleapi.Error); ok && gerr.Code == 404 {
+			resp.State.RemoveResource(ctx)
+			return
+		}
 		resp.Diagnostics.AddError("API Error", fmt.Sprintf("Unable to read group settings: %s", err))
 		return
 	}

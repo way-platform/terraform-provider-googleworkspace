@@ -13,6 +13,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	directory "google.golang.org/api/admin/directory/v1"
+	"google.golang.org/api/googleapi"
 )
 
 var (
@@ -139,6 +140,10 @@ func (r *groupMembersResource) Read(ctx context.Context, req resource.ReadReques
 		return nil
 	})
 	if err != nil {
+		if gerr, ok := err.(*googleapi.Error); ok && gerr.Code == 404 {
+			resp.State.RemoveResource(ctx)
+			return
+		}
 		resp.Diagnostics.AddError("API Error", fmt.Sprintf("Unable to list members: %s", err))
 		return
 	}
@@ -231,6 +236,9 @@ func (r *groupMembersResource) Delete(ctx context.Context, req resource.DeleteRe
 	for _, m := range state.Members {
 		err := svc.Members.Delete(state.GroupId.ValueString(), m.Email.ValueString()).Do()
 		if err != nil {
+			if gerr, ok := err.(*googleapi.Error); ok && gerr.Code == 404 {
+				continue
+			}
 			resp.Diagnostics.AddError("API Error", fmt.Sprintf("Unable to delete member %q: %s", m.Email.ValueString(), err))
 			return
 		}

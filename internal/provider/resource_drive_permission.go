@@ -209,6 +209,9 @@ func (r *drivePermissionResource) Delete(ctx context.Context, req resource.Delet
 		SupportsAllDrives(true).
 		Do()
 	if err != nil {
+		if gerr, ok := err.(*googleapi.Error); ok && gerr.Code == 404 {
+			return
+		}
 		resp.Diagnostics.AddError("API Error", fmt.Sprintf("Unable to delete permission: %s", err))
 		return
 	}
