@@ -190,7 +190,7 @@ func (r *driveResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	state.Name = types.StringValue(d.Name)
 	state.Id = types.StringValue(d.Id)
 
-	if d.Restrictions != nil {
+	if d.Restrictions != nil && state.Restrictions != nil {
 		state.Restrictions = &driveRestrictionsModel{
 			AdminManagedRestrictions:                  types.BoolValue(d.Restrictions.AdminManagedRestrictions),
 			CopyRequiresWriterPermission:              types.BoolValue(d.Restrictions.CopyRequiresWriterPermission),
