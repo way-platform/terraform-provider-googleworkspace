@@ -312,10 +312,11 @@ resource "googleworkspace_drive" "test" {
 `,
 			},
 			{
-				ResourceName:      "googleworkspace_drive.test",
-				ImportState:       true,
-				ImportStateId:     "true,drive-import",
-				ImportStateVerify: true,
+				ResourceName:            "googleworkspace_drive.test",
+				ImportState:             true,
+				ImportStateId:           "true,drive-import",
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"restrictions"},
 			},
 		},
 	})
@@ -379,6 +380,55 @@ resource "googleworkspace_drive" "test" {
 				// After apply, the post-apply refresh Read returns 404, removing the
 				// resource from state. The refresh plan shows a create is needed.
 				ExpectNonEmptyPlan: true,
+			},
+		},
+	})
+}
+
+func TestAccDrive_NoRestrictionsBlock(t *testing.T) {
+	server := setupTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/drives"):
+			jsonResponse(w, 200, map[string]any{
+				"kind": "drive#drive",
+				"id":   "drive-norestr",
+				"name": "NoRestrictions",
+			})
+
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "/drives/drive-norestr"):
+			jsonResponse(w, 200, map[string]any{
+				"kind": "drive#drive",
+				"id":   "drive-norestr",
+				"name": "NoRestrictions",
+				"restrictions": map[string]any{
+					"adminManagedRestrictions":                  false,
+					"copyRequiresWriterPermission":              false,
+					"domainUsersOnly":                           false,
+					"driveMembersOnly":                          false,
+					"sharingFoldersRequiresOrganizerPermission": false,
+				},
+			})
+
+		case r.Method == "DELETE" && strings.Contains(r.URL.Path, "/drives/drive-norestr"):
+			w.WriteHeader(204)
+
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(500)
+		}
+	}))
+	setupTestClient(t, server)
+
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testProviderConfig + `
+resource "googleworkspace_drive" "test" {
+  name = "NoRestrictions"
+}
+`,
+				Check: resource.TestCheckResourceAttr("googleworkspace_drive.test", "id", "drive-norestr"),
 			},
 		},
 	})

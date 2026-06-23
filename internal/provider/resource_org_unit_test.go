@@ -218,3 +218,77 @@ resource "googleworkspace_org_unit" "test" {
 		},
 	})
 }
+
+func TestAccOrgUnit_ClearDescription(t *testing.T) {
+	step := 0
+
+	server := setupTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "POST" && strings.Contains(r.URL.Path, "/admin/directory/v1/customer/C00000000/orgunits"):
+			jsonResponse(w, 200, map[string]any{
+				"kind":              "admin#directory#orgUnit",
+				"orgUnitId":        "id:ou-desc",
+				"name":             "DescOU",
+				"orgUnitPath":      "/DescOU",
+				"parentOrgUnitPath": "/",
+				"description":      "Initial",
+			})
+
+		case r.Method == "PUT" && strings.Contains(r.URL.Path, "/admin/directory/v1/customer/C00000000/orgunits/id:ou-desc"):
+			step++
+			jsonResponse(w, 200, map[string]any{
+				"kind":              "admin#directory#orgUnit",
+				"orgUnitId":        "id:ou-desc",
+				"name":             "DescOU",
+				"orgUnitPath":      "/DescOU",
+				"parentOrgUnitPath": "/",
+			})
+
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "/admin/directory/v1/customer/C00000000/orgunits/id:ou-desc"):
+			resp := map[string]any{
+				"kind":              "admin#directory#orgUnit",
+				"orgUnitId":        "id:ou-desc",
+				"name":             "DescOU",
+				"orgUnitPath":      "/DescOU",
+				"parentOrgUnitPath": "/",
+			}
+			if step == 0 {
+				resp["description"] = "Initial"
+			}
+			jsonResponse(w, 200, resp)
+
+		case r.Method == "DELETE" && strings.Contains(r.URL.Path, "/admin/directory/v1/customer/C00000000/orgunits/id:ou-desc"):
+			w.WriteHeader(204)
+
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(500)
+		}
+	}))
+	setupTestClient(t, server)
+
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testProviderConfig + `
+resource "googleworkspace_org_unit" "test" {
+  name                 = "DescOU"
+  parent_org_unit_path = "/"
+  description          = "Initial"
+}
+`,
+				Check: resource.TestCheckResourceAttr("googleworkspace_org_unit.test", "description", "Initial"),
+			},
+			{
+				Config: testProviderConfig + `
+resource "googleworkspace_org_unit" "test" {
+  name                 = "DescOU"
+  parent_org_unit_path = "/"
+}
+`,
+				Check: resource.TestCheckNoResourceAttr("googleworkspace_org_unit.test", "description"),
+			},
+		},
+	})
+}
