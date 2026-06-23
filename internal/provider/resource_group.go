@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -137,6 +138,7 @@ func (r *groupResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	}
 
 	if len(group.Aliases) > 0 {
+		sort.Strings(group.Aliases)
 		aliases, diags := types.ListValueFrom(ctx, types.StringType, group.Aliases)
 		resp.Diagnostics.Append(diags...)
 		state.Aliases = aliases
