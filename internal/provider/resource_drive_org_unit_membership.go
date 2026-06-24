@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	directory "google.golang.org/api/admin/directory/v1"
 	cibeta "google.golang.org/api/cloudidentity/v1beta1"
 	"google.golang.org/api/googleapi"
 )
@@ -88,32 +90,32 @@ func (r *driveOrgUnitMembershipResource) Read(ctx context.Context, req resource.
 		return
 	}
 
-	driveSvc, err := r.client.NewDriveService(ctx)
-	if err != nil {
-		resp.Diagnostics.AddError("Client Error", fmt.Sprintf("Unable to create Drive service: %s", err))
-		return
-	}
+	driveId := state.DriveId.ValueString()
+	orgUnitId := state.OrgUnitId.ValueString()
 
-	d, err := driveSvc.Drives.Get(state.DriveId.ValueString()).
-		UseDomainAdminAccess(true).
-		Fields("orgUnitId").
-		Do()
+	var found bool
+	var err error
+	if orgUnitId != "" {
+		orgUnitId, found, err = r.findDriveOrgUnitMembershipInOrgUnit(ctx, driveId, orgUnitId)
+	}
+	if err == nil && !found {
+		orgUnitId, found, err = r.findDriveOrgUnitMembership(ctx, driveId)
+	}
 	if err != nil {
-		if gerr, ok := err.(*googleapi.Error); ok && gerr.Code == 404 {
+		if isGoogleNotFound(err) {
 			resp.State.RemoveResource(ctx)
 			return
 		}
-		resp.Diagnostics.AddError("API Error", fmt.Sprintf("Unable to read drive: %s", err))
+		resp.Diagnostics.AddError("API Error", fmt.Sprintf("Unable to read drive org unit membership: %s", err))
 		return
 	}
-
-	if d.OrgUnitId == "" {
+	if !found {
 		resp.State.RemoveResource(ctx)
 		return
 	}
 
-	state.OrgUnitId = types.StringValue(d.OrgUnitId)
-	state.Id = types.StringValue(state.DriveId.ValueString())
+	state.OrgUnitId = types.StringValue(orgUnitId)
+	state.Id = types.StringValue(driveId)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -141,13 +143,86 @@ func (r *driveOrgUnitMembershipResource) ImportState(ctx context.Context, req re
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), req.ID)...)
 }
 
+func (r *driveOrgUnitMembershipResource) findDriveOrgUnitMembership(ctx context.Context, driveId string) (string, bool, error) {
+	dirSvc, err := r.client.NewDirectoryService(ctx)
+	if err != nil {
+		return "", false, fmt.Errorf("creating Directory service: %w", err)
+	}
+
+	orgUnits, err := dirSvc.Orgunits.List(r.client.customerID).
+		Type("allIncludingParent").
+		Fields("organizationUnits(orgUnitId)").
+		Context(ctx).
+		Do()
+	if err != nil {
+		return "", false, err
+	}
+
+	for _, orgUnit := range orgUnits.OrganizationUnits {
+		orgUnitId := orgUnitID(orgUnit)
+		if orgUnitId == "" {
+			continue
+		}
+
+		foundOrgUnitId, found, err := r.findDriveOrgUnitMembershipInOrgUnit(ctx, driveId, orgUnitId)
+		if err != nil {
+			if isGoogleNotFound(err) {
+				continue
+			}
+			return "", false, err
+		}
+		if found {
+			return foundOrgUnitId, true, nil
+		}
+	}
+
+	return "", false, nil
+}
+
+func (r *driveOrgUnitMembershipResource) findDriveOrgUnitMembershipInOrgUnit(ctx context.Context, driveId, orgUnitId string) (string, bool, error) {
+	ciSvc, err := r.client.NewCloudIdentityService(ctx)
+	if err != nil {
+		return "", false, fmt.Errorf("creating Cloud Identity service: %w", err)
+	}
+
+	membershipsSvc := cibeta.NewOrgUnitsMembershipsService(ciSvc)
+	parent := fmt.Sprintf("orgUnits/%s", normalizeOrgUnitId(orgUnitId))
+	err = membershipsSvc.List(parent).
+		Customer(fmt.Sprintf("customers/%s", r.client.customerID)).
+		Filter("type == 'shared_drive'").
+		PageSize(100).
+		Fields("orgMemberships(name,member,memberUri,type),nextPageToken").
+		Pages(ctx, func(page *cibeta.ListOrgMembershipsResponse) error {
+			for _, membership := range page.OrgMemberships {
+				if !driveOrgMembershipMatches(membership, driveId) {
+					continue
+				}
+
+				orgUnitId = orgUnitIDFromOrgMembershipName(membership.Name)
+				if orgUnitId == "" {
+					orgUnitId = strings.TrimPrefix(parent, "orgUnits/")
+				}
+				return errDriveOrgUnitMembershipFound
+			}
+			return nil
+		})
+	if errors.Is(err, errDriveOrgUnitMembershipFound) {
+		return orgUnitId, true, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+
+	return "", false, nil
+}
+
 func (r *driveOrgUnitMembershipResource) moveDriveToOU(ctx context.Context, driveId, orgUnitId string) error {
 	ciSvc, err := r.client.NewCloudIdentityService(ctx)
 	if err != nil {
 		return fmt.Errorf("creating Cloud Identity service: %w", err)
 	}
 
-	orgUnitId = strings.TrimPrefix(orgUnitId, "id:")
+	orgUnitId = normalizeOrgUnitId(orgUnitId)
 	name := fmt.Sprintf("orgUnits/-/memberships/shared_drive;%s", driveId)
 	moveReq := &cibeta.MoveOrgMembershipRequest{
 		Customer:           fmt.Sprintf("customers/%s", r.client.customerID),
@@ -160,4 +235,43 @@ func (r *driveOrgUnitMembershipResource) moveDriveToOU(ctx context.Context, driv
 	}
 
 	return nil
+}
+
+var errDriveOrgUnitMembershipFound = errors.New("drive org unit membership found")
+
+func driveOrgMembershipMatches(membership *cibeta.OrgMembership, driveId string) bool {
+	if membership == nil {
+		return false
+	}
+
+	return strings.HasSuffix(membership.Name, "/memberships/shared_drive;"+driveId) ||
+		membership.Member == "//drive.googleapis.com/drives/"+driveId ||
+		membership.MemberUri == "https://drive.googleapis.com/drive/v3/drives/"+driveId
+}
+
+func orgUnitIDFromOrgMembershipName(name string) string {
+	name = strings.TrimPrefix(name, "orgUnits/")
+	before, _, ok := strings.Cut(name, "/memberships/")
+	if !ok {
+		return ""
+	}
+
+	return normalizeOrgUnitId(before)
+}
+
+func orgUnitID(orgUnit *directory.OrgUnit) string {
+	if orgUnit == nil {
+		return ""
+	}
+
+	return normalizeOrgUnitId(orgUnit.OrgUnitId)
+}
+
+func normalizeOrgUnitId(orgUnitId string) string {
+	return strings.TrimPrefix(orgUnitId, "id:")
+}
+
+func isGoogleNotFound(err error) bool {
+	gerr, ok := err.(*googleapi.Error)
+	return ok && gerr.Code == 404
 }
