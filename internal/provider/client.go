@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	directory "google.golang.org/api/admin/directory/v1"
+	cibeta "google.golang.org/api/cloudidentity/v1beta1"
 	"google.golang.org/api/drive/v3"
 	"google.golang.org/api/groupssettings/v1"
 	"google.golang.org/api/option"
@@ -30,6 +31,10 @@ func (c *apiClient) NewDriveService(ctx context.Context) (*drive.Service, error)
 
 func (c *apiClient) NewDirectoryService(ctx context.Context) (*directory.Service, error) {
 	return directory.NewService(ctx, c.clientOptions()...)
+}
+
+func (c *apiClient) NewCloudIdentityService(ctx context.Context) (*cibeta.Service, error) {
+	return cibeta.NewService(ctx, c.clientOptions()...)
 }
 
 func (c *apiClient) NewGroupsSettingsService(ctx context.Context) (*groupssettings.Service, error) {

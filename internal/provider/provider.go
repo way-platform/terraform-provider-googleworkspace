@@ -187,6 +187,7 @@ func (p *googleworkspaceProvider) Configure(ctx context.Context, req provider.Co
 func (p *googleworkspaceProvider) Resources(ctx context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
 		newDrive,
+		newDriveOrgUnitMembership,
 		newDrivePermission,
 		newOrgUnit,
 		newGroup,
