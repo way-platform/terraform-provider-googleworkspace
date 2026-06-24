@@ -41,6 +41,7 @@ type driveResourceModel struct {
 	Restrictions         *driveRestrictionsModel `tfsdk:"restrictions"`
 	Name                 types.String            `tfsdk:"name"`
 	Id                   types.String            `tfsdk:"id"`
+	OrgUnitId            types.String            `tfsdk:"org_unit_id"`
 	UseDomainAdminAccess types.Bool              `tfsdk:"use_domain_admin_access"`
 }
 
@@ -54,6 +55,10 @@ func (r *driveResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			"id": rsId(),
 			"name": schema.StringAttribute{
 				Required: true,
+			},
+			"org_unit_id": schema.StringAttribute{
+				Optional: true,
+				Computed: true,
 			},
 			"use_domain_admin_access": schema.BoolAttribute{
 				Optional: true,
@@ -135,14 +140,20 @@ func (r *driveResource) Create(ctx context.Context, req resource.CreateRequest, 
 	}
 
 	plan.Id = types.StringValue(created.Id)
+	if plan.OrgUnitId.IsUnknown() {
+		plan.OrgUnitId = types.StringNull()
+	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	if plan.Restrictions != nil {
-		updateReq := &drive.Drive{
-			Restrictions: &drive.DriveRestrictions{
+	hasOrgUnitId := !plan.OrgUnitId.IsNull() && !plan.OrgUnitId.IsUnknown()
+	needsPostCreateUpdate := plan.Restrictions != nil || hasOrgUnitId
+	if needsPostCreateUpdate {
+		updateReq := &drive.Drive{}
+		if plan.Restrictions != nil {
+			updateReq.Restrictions = &drive.DriveRestrictions{
 				AdminManagedRestrictions:                  plan.Restrictions.AdminManagedRestrictions.ValueBool(),
 				CopyRequiresWriterPermission:              plan.Restrictions.CopyRequiresWriterPermission.ValueBool(),
 				DomainUsersOnly:                           plan.Restrictions.DomainUsersOnly.ValueBool(),
@@ -155,13 +166,16 @@ func (r *driveResource) Create(ctx context.Context, req resource.CreateRequest, 
 					"DriveMembersOnly",
 					"SharingFoldersRequiresOrganizerPermission",
 				},
-			},
+			}
+		}
+		if hasOrgUnitId {
+			updateReq.OrgUnitId = plan.OrgUnitId.ValueString()
 		}
 		// Retry with backoff: the Drive API has eventual consistency after creation.
 		for attempt := 0; ; attempt++ {
 			_, err = driveSvc.Drives.Update(created.Id, updateReq).
 				UseDomainAdminAccess(plan.UseDomainAdminAccess.ValueBool()).
-				Fields("id,name,restrictions").
+				Fields("id,name,restrictions,orgUnitId").
 				Do()
 			if err == nil {
 				break
@@ -175,7 +189,7 @@ func (r *driveResource) Create(ctx context.Context, req resource.CreateRequest, 
 				}
 				continue
 			}
-			resp.Diagnostics.AddError("API Error", fmt.Sprintf("Unable to update drive restrictions: %s", err))
+			resp.Diagnostics.AddError("API Error", fmt.Sprintf("Unable to update drive after creation: %s", err))
 			return
 		}
 	}
@@ -198,7 +212,7 @@ func (r *driveResource) Read(ctx context.Context, req resource.ReadRequest, resp
 
 	d, err := driveSvc.Drives.Get(state.Id.ValueString()).
 		UseDomainAdminAccess(state.UseDomainAdminAccess.ValueBool()).
-		Fields("id,name,restrictions").
+		Fields("id,name,restrictions,orgUnitId").
 		Do()
 	if err != nil {
 		if gerr, ok := err.(*googleapi.Error); ok && gerr.Code == 404 {
@@ -211,6 +225,11 @@ func (r *driveResource) Read(ctx context.Context, req resource.ReadRequest, resp
 
 	state.Name = types.StringValue(d.Name)
 	state.Id = types.StringValue(d.Id)
+	if d.OrgUnitId != "" {
+		state.OrgUnitId = types.StringValue(d.OrgUnitId)
+	} else {
+		state.OrgUnitId = types.StringNull()
+	}
 
 	if d.Restrictions != nil {
 		hasRestrictions := d.Restrictions.AdminManagedRestrictions ||
@@ -264,10 +283,15 @@ func (r *driveResource) Update(ctx context.Context, req resource.UpdateRequest, 
 			},
 		}
 	}
+	if !plan.OrgUnitId.IsNull() {
+		driveReq.OrgUnitId = plan.OrgUnitId.ValueString()
+	} else {
+		driveReq.NullFields = append(driveReq.NullFields, "OrgUnitId")
+	}
 
 	d, err := driveSvc.Drives.Update(plan.Id.ValueString(), driveReq).
 		UseDomainAdminAccess(plan.UseDomainAdminAccess.ValueBool()).
-		Fields("id,name,restrictions").
+		Fields("id,name,restrictions,orgUnitId").
 		Do()
 	if err != nil {
 		resp.Diagnostics.AddError("API Error", fmt.Sprintf("Unable to update drive: %s", err))
@@ -275,6 +299,11 @@ func (r *driveResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	}
 
 	plan.Id = types.StringValue(d.Id)
+	if d.OrgUnitId != "" {
+		plan.OrgUnitId = types.StringValue(d.OrgUnitId)
+	} else {
+		plan.OrgUnitId = types.StringNull()
+	}
 	if d.Restrictions != nil {
 		plan.Restrictions = &driveRestrictionsModel{
 			AdminManagedRestrictions:                  types.BoolValue(d.Restrictions.AdminManagedRestrictions),
