@@ -175,7 +175,7 @@ func (r *driveResource) Create(ctx context.Context, req resource.CreateRequest, 
 		for attempt := 0; ; attempt++ {
 			_, err = driveSvc.Drives.Update(created.Id, updateReq).
 				UseDomainAdminAccess(plan.UseDomainAdminAccess.ValueBool()).
-				Fields("id,name,restrictions,orgUnitId").
+				Fields("id").
 				Do()
 			if err == nil {
 				break
@@ -191,6 +191,19 @@ func (r *driveResource) Create(ctx context.Context, req resource.CreateRequest, 
 			}
 			resp.Diagnostics.AddError("API Error", fmt.Sprintf("Unable to update drive after creation: %s", err))
 			return
+		}
+
+		// Read back state; Update response may not include orgUnitId.
+		d, err := driveSvc.Drives.Get(created.Id).
+			UseDomainAdminAccess(plan.UseDomainAdminAccess.ValueBool()).
+			Fields("id,name,restrictions,orgUnitId").
+			Do()
+		if err != nil {
+			resp.Diagnostics.AddError("API Error", fmt.Sprintf("Unable to read drive after creation: %s", err))
+			return
+		}
+		if d.OrgUnitId != "" {
+			plan.OrgUnitId = types.StringValue(d.OrgUnitId)
 		}
 	}
 
@@ -289,16 +302,28 @@ func (r *driveResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		driveReq.NullFields = append(driveReq.NullFields, "OrgUnitId")
 	}
 
-	d, err := driveSvc.Drives.Update(plan.Id.ValueString(), driveReq).
+	_, err = driveSvc.Drives.Update(plan.Id.ValueString(), driveReq).
 		UseDomainAdminAccess(plan.UseDomainAdminAccess.ValueBool()).
-		Fields("id,name,restrictions,orgUnitId").
+		Fields("id").
 		Do()
 	if err != nil {
 		resp.Diagnostics.AddError("API Error", fmt.Sprintf("Unable to update drive: %s", err))
 		return
 	}
 
+	// Read back the drive state; the Update response may not include all fields
+	// (orgUnitId in particular is not returned by the Update endpoint).
+	d, err := driveSvc.Drives.Get(plan.Id.ValueString()).
+		UseDomainAdminAccess(plan.UseDomainAdminAccess.ValueBool()).
+		Fields("id,name,restrictions,orgUnitId").
+		Do()
+	if err != nil {
+		resp.Diagnostics.AddError("API Error", fmt.Sprintf("Unable to read drive after update: %s", err))
+		return
+	}
+
 	plan.Id = types.StringValue(d.Id)
+	plan.Name = types.StringValue(d.Name)
 	if d.OrgUnitId != "" {
 		plan.OrgUnitId = types.StringValue(d.OrgUnitId)
 	} else {

@@ -54,6 +54,21 @@ Always set `ForceSendFields` when a Google API struct field can legitimately be 
 - **Read**: call `resp.State.RemoveResource(ctx)` and return (resource was deleted externally)
 - **Delete**: return without error (idempotent)
 
+### Partial response Fields() selector
+
+Every Google API call that uses `.Fields(...)` only returns the listed fields.
+When adding a new attribute to a resource:
+
+1. Add the field name to **every** `.Fields()` call in Create, Read, and Update
+2. In tests, the mock handler must **only return fields present in the
+   request's `fields` query parameter** (parse `r.URL.Query().Get("fields")`).
+   Never return fields unconditionally; this catches a missing `Fields()`
+   entry at test time rather than in production.
+
+This prevents the "inconsistent result after apply" class of bugs where
+Terraform plans a value but the Read returns null because the field wasn't
+requested.
+
 ### Testing
 
 Tests use a mock HTTP server, never real API calls:
@@ -61,6 +76,7 @@ Tests use a mock HTTP server, never real API calls:
 - `setupTestServer()` — creates `httptest.Server` with a route handler
 - `setupTestClient()` — injects mock client into provider, bypasses auth
 - `jsonResponse()` — helper to write JSON responses in handlers
+- Mock handlers must respect the `fields` query parameter (see above)
 
 ### Retry
 
