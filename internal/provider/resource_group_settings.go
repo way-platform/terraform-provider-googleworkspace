@@ -4,11 +4,14 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/groupssettings/v1"
@@ -26,9 +29,11 @@ type groupSettingsResource struct {
 }
 
 type groupSettingsResourceModel struct {
-	Id                   types.String `tfsdk:"id"`
-	Email                types.String `tfsdk:"email"`
-	WhoCanViewMembership types.String `tfsdk:"who_can_view_membership"`
+	Id                     types.String `tfsdk:"id"`
+	Email                  types.String `tfsdk:"email"`
+	WhoCanViewMembership   types.String `tfsdk:"who_can_view_membership"`
+	WhoCanPostMessage      types.String `tfsdk:"who_can_post_message"`
+	MessageModerationLevel types.String `tfsdk:"message_moderation_level"`
 }
 
 func (r *groupSettingsResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -46,6 +51,39 @@ func (r *groupSettingsResource) Schema(_ context.Context, _ resource.SchemaReque
 				},
 			},
 			"who_can_view_membership": schema.StringAttribute{Optional: true},
+			// who_can_post_message is mutated server-side (e.g. archive_only flips it to
+			// NONE_CAN_POST / ALL_MANAGERS_CAN_POST) and the API always returns a value, so it is
+			// Computed to avoid perpetual diffs when left unset.
+			"who_can_post_message": schema.StringAttribute{
+				Optional: true,
+				Computed: true,
+				Validators: []validator.String{
+					stringvalidator.OneOf(
+						"NONE_CAN_POST",
+						"ALL_MANAGERS_CAN_POST",
+						"ALL_MEMBERS_CAN_POST",
+						"ALL_OWNERS_CAN_POST",
+						"ALL_IN_DOMAIN_CAN_POST",
+						"ANYONE_CAN_POST",
+					),
+				},
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"message_moderation_level": schema.StringAttribute{
+				Optional: true,
+				Computed: true,
+				Default:  stringdefault.StaticString("MODERATE_NONE"),
+				Validators: []validator.String{
+					stringvalidator.OneOf(
+						"MODERATE_ALL_MESSAGES",
+						"MODERATE_NON_MEMBERS",
+						"MODERATE_NEW_MEMBERS",
+						"MODERATE_NONE",
+					),
+				},
+			},
 		},
 	}
 }
@@ -78,13 +116,21 @@ func (r *groupSettingsResource) Create(ctx context.Context, req resource.CreateR
 	plan.Id = plan.Email
 
 	settings := &groupssettings.Groups{
-		WhoCanViewMembership: plan.WhoCanViewMembership.ValueString(),
+		WhoCanViewMembership:   plan.WhoCanViewMembership.ValueString(),
+		WhoCanPostMessage:      plan.WhoCanPostMessage.ValueString(),
+		MessageModerationLevel: plan.MessageModerationLevel.ValueString(),
 	}
 
-	_, err = svc.Groups.Update(plan.Email.ValueString(), settings).Do()
+	updated, err := svc.Groups.Update(plan.Email.ValueString(), settings).Do()
 	if err != nil {
 		resp.Diagnostics.AddError("API Error", fmt.Sprintf("Unable to update group settings: %s", err))
 		return
+	}
+
+	// who_can_post_message is Computed: populate it from the API response so a value left unset in
+	// the configuration resolves to the server-assigned value rather than staying unknown.
+	if updated.WhoCanPostMessage != "" {
+		plan.WhoCanPostMessage = types.StringValue(updated.WhoCanPostMessage)
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
@@ -116,6 +162,12 @@ func (r *groupSettingsResource) Read(ctx context.Context, req resource.ReadReque
 	if settings.WhoCanViewMembership != "" {
 		state.WhoCanViewMembership = types.StringValue(settings.WhoCanViewMembership)
 	}
+	if settings.WhoCanPostMessage != "" {
+		state.WhoCanPostMessage = types.StringValue(settings.WhoCanPostMessage)
+	}
+	if settings.MessageModerationLevel != "" {
+		state.MessageModerationLevel = types.StringValue(settings.MessageModerationLevel)
+	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
@@ -136,13 +188,19 @@ func (r *groupSettingsResource) Update(ctx context.Context, req resource.UpdateR
 	plan.Id = plan.Email
 
 	settings := &groupssettings.Groups{
-		WhoCanViewMembership: plan.WhoCanViewMembership.ValueString(),
+		WhoCanViewMembership:   plan.WhoCanViewMembership.ValueString(),
+		WhoCanPostMessage:      plan.WhoCanPostMessage.ValueString(),
+		MessageModerationLevel: plan.MessageModerationLevel.ValueString(),
 	}
 
-	_, err = svc.Groups.Update(plan.Email.ValueString(), settings).Do()
+	updated, err := svc.Groups.Update(plan.Email.ValueString(), settings).Do()
 	if err != nil {
 		resp.Diagnostics.AddError("API Error", fmt.Sprintf("Unable to update group settings: %s", err))
 		return
+	}
+
+	if updated.WhoCanPostMessage != "" {
+		plan.WhoCanPostMessage = types.StringValue(updated.WhoCanPostMessage)
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
