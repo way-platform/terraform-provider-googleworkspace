@@ -64,6 +64,15 @@ Tests use a mock HTTP server, never real API calls:
 
 Automatic retry on 429, 403 quota errors, and 5xx (except 501). Configurable via provider `retry_on` attribute.
 
+## Benchmarking
+
+When designing resources or solving implementation questions, reference these providers for patterns and prior art:
+
+- [`hashicorp/terraform-provider-googleworkspace`](https://github.com/hashicorp/terraform-provider-googleworkspace) — HashiCorp's archived provider (SDK v2); good reference for schema design and API coverage
+- [`hanneshayashi/terraform-provider-gdrive`](https://github.com/hanneshayashi/terraform-provider-gdrive) — Community Drive provider; good reference for Drive API patterns and permission handling
+
+Clone or browse these repos to compare schema choices, CRUD implementations, and error handling before building new resources. Use them for inspiration and reference only; do not copy code verbatim and respect each project's license.
+
 ## CI
 
 - PR: lint + test + build (GitHub Actions)
