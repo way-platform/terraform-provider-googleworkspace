@@ -147,7 +147,6 @@ func (r *drivePermissionResource) Read(ctx context.Context, req resource.ReadReq
 	}
 
 	state.PermissionId = types.StringValue(perm.Id)
-	state.EmailAddress = types.StringValue(perm.EmailAddress)
 	state.Role = types.StringValue(perm.Role)
 	state.Type = types.StringValue(perm.Type)
 	state.Id = types.StringValue(state.FileId.ValueString() + "/" + perm.Id)
@@ -183,7 +182,6 @@ func (r *drivePermissionResource) Update(ctx context.Context, req resource.Updat
 	}
 
 	plan.PermissionId = types.StringValue(updated.Id)
-	plan.EmailAddress = types.StringValue(updated.EmailAddress)
 	plan.Role = types.StringValue(updated.Role)
 	plan.Type = types.StringValue(updated.Type)
 	plan.Id = types.StringValue(plan.FileId.ValueString() + "/" + updated.Id)

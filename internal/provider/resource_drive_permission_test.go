@@ -176,6 +176,98 @@ resource "googleworkspace_drive_permission" "test" {
 	}
 }
 
+func TestAccDrivePermission_EmailAliasPreserved(t *testing.T) {
+	// The Drive API returns whichever domain alias it considers canonical
+	// (e.g. oskari@waydata.io) even when the permission was created with the
+	// primary email (oskari@way.cloud). The provider must preserve the
+	// configured email_address to avoid "inconsistent result after apply".
+	updated := false
+
+	server := setupTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "POST" && strings.Contains(r.URL.Path, "/permissions"):
+			jsonResponse(w, 200, map[string]any{
+				"kind": "drive#permission",
+				"id":   "perm-alias",
+			})
+
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "/permissions/perm-alias"):
+			role := "organizer"
+			if updated {
+				role = "writer"
+			}
+			// API always returns the alias, not the configured primary email
+			jsonResponse(w, 200, map[string]any{
+				"kind":         "drive#permission",
+				"id":           "perm-alias",
+				"emailAddress": "oskari@waydata.io",
+				"role":         role,
+				"type":         "user",
+			})
+
+		case r.Method == "PATCH" && strings.Contains(r.URL.Path, "/permissions/perm-alias"):
+			updated = true
+			jsonResponse(w, 200, map[string]any{
+				"kind":         "drive#permission",
+				"id":           "perm-alias",
+				"emailAddress": "oskari@waydata.io",
+				"role":         "writer",
+				"type":         "user",
+			})
+
+		case r.Method == "DELETE" && strings.Contains(r.URL.Path, "/permissions/perm-alias"):
+			w.WriteHeader(204)
+
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(500)
+		}
+	}))
+	setupTestClient(t, server)
+
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testProviderConfig + `
+resource "googleworkspace_drive_permission" "test" {
+  file_id                 = "drive-restricted"
+  email_address           = "oskari@way.cloud"
+  role                    = "organizer"
+  type                    = "user"
+  use_domain_admin_access = true
+}
+`,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					// email_address must stay as configured, not be overwritten by the API alias
+					resource.TestCheckResourceAttr("googleworkspace_drive_permission.test", "email_address", "oskari@way.cloud"),
+					resource.TestCheckResourceAttr("googleworkspace_drive_permission.test", "role", "organizer"),
+				),
+			},
+			// Second step: role change triggers Update; email must still be preserved
+			{
+				Config: testProviderConfig + `
+resource "googleworkspace_drive_permission" "test" {
+  file_id                 = "drive-restricted"
+  email_address           = "oskari@way.cloud"
+  role                    = "writer"
+  type                    = "user"
+  use_domain_admin_access = true
+}
+`,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("googleworkspace_drive_permission.test", "email_address", "oskari@way.cloud"),
+					resource.TestCheckResourceAttr("googleworkspace_drive_permission.test", "role", "writer"),
+				),
+			},
+		},
+	})
+
+	if !updated {
+		t.Error("expected an update call but none occurred")
+	}
+}
+
 func TestAccDrivePermission_ReadNotFound(t *testing.T) {
 	readCount := 0
 
