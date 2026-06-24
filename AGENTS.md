@@ -34,7 +34,7 @@ Always load `terraform-provider-dev`. Load the relevant API skill alongside it w
 | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
 | Any resource or data source                                                                                                                   | `terraform-provider-dev` |
 | resource_user, resource_group, resource_group_members, resource_group_settings, resource_org_unit, resource_role_assignment, data_source_role | + `admin-directory-api`  |
-| resource_drive, resource_drive_permission                                                                                                     | + `google-drive-api`     |
+| resource_drive, resource_drive_permission, resource_drive_org_unit_membership                                                                 | + `google-drive-api`     |
 
 ## Architecture
 
@@ -44,6 +44,10 @@ Always load `terraform-provider-dev`. Load the relevant API skill alongside it w
 - New resources must be registered in `provider.go` `Resources()` / `DataSources()`
 
 ## Conventions
+
+### Resource naming
+
+Use the same terminology as the Google API and our existing resources. Spell out full words (`org_unit`, not `ou`). Match the resource suffix to the API service name when possible (e.g., `OrgUnitsMembershipsService` → `_org_unit_membership`). Never abbreviate to jargon that doesn't appear in the API surface.
 
 ### Google API zero-value fields
 
