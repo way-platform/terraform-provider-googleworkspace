@@ -263,6 +263,57 @@ resource "googleworkspace_group" "test" {
 	})
 }
 
+func TestAccGroup_EmptyAliasesNoPerpetualDiff(t *testing.T) {
+	server := setupTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/admin/directory/v1/groups"):
+			jsonResponse(w, 200, map[string]any{
+				"kind":  "admin#directory#group",
+				"id":    "group-empty-aliases",
+				"email": "team@way.cloud",
+				"name":  "Way Team",
+			})
+
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "/admin/directory/v1/groups/group-empty-aliases"):
+			jsonResponse(w, 200, map[string]any{
+				"kind":  "admin#directory#group",
+				"id":    "group-empty-aliases",
+				"email": "team@way.cloud",
+				"name":  "Way Team",
+			})
+
+		case r.Method == "DELETE" && strings.Contains(r.URL.Path, "/admin/directory/v1/groups/group-empty-aliases"):
+			w.WriteHeader(204)
+
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(500)
+		}
+	}))
+	setupTestClient(t, server)
+
+	config := testProviderConfig + `
+resource "googleworkspace_group" "test" {
+  email   = "team@way.cloud"
+  name    = "Way Team"
+  aliases = []
+}
+`
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				Check:  resource.TestCheckResourceAttr("googleworkspace_group.test", "aliases.#", "0"),
+			},
+			{
+				Config:   config,
+				PlanOnly: true,
+			},
+		},
+	})
+}
+
 func TestAccGroup_ClearDescription(t *testing.T) {
 	step := 0
 

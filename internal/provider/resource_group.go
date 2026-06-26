@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -142,8 +143,8 @@ func (r *groupResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		aliases, diags := types.ListValueFrom(ctx, types.StringType, group.Aliases)
 		resp.Diagnostics.Append(diags...)
 		state.Aliases = aliases
-	} else {
-		state.Aliases = types.ListNull(types.StringType)
+	} else if !state.Aliases.IsNull() {
+		state.Aliases = types.ListValueMust(types.StringType, []attr.Value{})
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
