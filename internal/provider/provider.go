@@ -194,6 +194,7 @@ func (p *googleworkspaceProvider) Resources(ctx context.Context) []func() resour
 		newGroupMembers,
 		newGroupSettings,
 		newRoleAssignment,
+		newSchema,
 		newUser,
 	}
 }

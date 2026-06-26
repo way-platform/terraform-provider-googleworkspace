@@ -66,6 +66,18 @@ Tests use a mock HTTP server, never real API calls:
 - `setupTestClient()` — injects mock client into provider, bypasses auth
 - `jsonResponse()` — helper to write JSON responses in handlers
 
+### Context propagation
+
+Always chain `.Context(ctx)` before `.Do()` on Google API calls. Without it, Terraform cancellation (user Ctrl+C, timeouts) won't propagate to in-flight HTTP requests.
+
+```go
+svc.Users.Get(userKey).Projection("full").Context(ctx).Do()
+```
+
+### Etags
+
+Don't expose `etag` fields in schemas. Etags are transport-level caching headers; we don't use conditional updates (If-Match), so surfacing them adds noise to state without benefit.
+
 ### Retry
 
 Automatic retry on 429, 403 quota errors, and 5xx (except 501). Configurable via provider `retry_on` attribute.
