@@ -168,7 +168,7 @@ func (r *groupMembersResource) Update(ctx context.Context, req resource.UpdateRe
 		return
 	}
 
-	plan.Id = plan.GroupId
+	plan.Id = state.Id
 
 	currentMembers := make(map[string]groupMemberModel)
 	for _, m := range state.Members {
