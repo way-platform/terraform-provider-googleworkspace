@@ -267,3 +267,106 @@ resource "googleworkspace_group_members" "test" {
 		t.Error("expected charlie@way.cloud to be inserted")
 	}
 }
+
+func TestAccGroupMembers_UpdatePreservesId(t *testing.T) {
+	// Regression test: when group_id is an opaque ID (as returned by
+	// googleworkspace_group.id), the resource ID must remain stable across
+	// updates. Previously, plan.Id was set to plan.GroupId during Update,
+	// which could differ from the state ID if the resource was imported with
+	// a "groups/" prefix, causing "inconsistent result after apply" errors.
+	var mu sync.Mutex
+	currentMembers := map[string]map[string]any{}
+
+	server := setupTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+
+		switch {
+		case r.Method == "POST" && strings.Contains(r.URL.Path, "/groups/014ykbeg3ho3mlg/members"):
+			body, _ := io.ReadAll(r.Body)
+			var member map[string]any
+			if err := json.Unmarshal(body, &member); err != nil {
+				t.Errorf("failed to unmarshal request: %v", err)
+				w.WriteHeader(500)
+				return
+			}
+			email := member["email"].(string)
+			currentMembers[email] = member
+			jsonResponse(w, 200, map[string]any{
+				"kind":  "admin#directory#member",
+				"email": email,
+				"role":  member["role"],
+				"type":  member["type"],
+				"id":    "member-" + email,
+			})
+
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "/groups/014ykbeg3ho3mlg/members"):
+			members := make([]map[string]any, 0, len(currentMembers))
+			for email, m := range currentMembers {
+				members = append(members, map[string]any{
+					"kind":  "admin#directory#member",
+					"email": email,
+					"role":  m["role"],
+					"type":  m["type"],
+					"id":    "member-" + email,
+				})
+			}
+			jsonResponse(w, 200, map[string]any{
+				"kind":    "admin#directory#members",
+				"members": members,
+			})
+
+		case r.Method == "DELETE" && strings.Contains(r.URL.Path, "/groups/014ykbeg3ho3mlg/members/"):
+			parts := strings.Split(r.URL.Path, "/members/")
+			email := parts[len(parts)-1]
+			delete(currentMembers, email)
+			w.WriteHeader(204)
+
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(500)
+		}
+	}))
+	setupTestClient(t, server)
+
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: testProviderConfig + `
+resource "googleworkspace_group_members" "test" {
+  group_id = "014ykbeg3ho3mlg"
+
+  members {
+    email = "alice@way.cloud"
+    role  = "MEMBER"
+  }
+}
+`,
+				Check: resource.TestCheckResourceAttr("googleworkspace_group_members.test", "id", "014ykbeg3ho3mlg"),
+			},
+			// Step 2: add a member — ID must remain "014ykbeg3ho3mlg"
+			{
+				Config: testProviderConfig + `
+resource "googleworkspace_group_members" "test" {
+  group_id = "014ykbeg3ho3mlg"
+
+  members {
+    email = "alice@way.cloud"
+    role  = "MEMBER"
+  }
+
+  members {
+    email = "bob@way.cloud"
+    role  = "MEMBER"
+  }
+}
+`,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("googleworkspace_group_members.test", "id", "014ykbeg3ho3mlg"),
+					resource.TestCheckResourceAttr("googleworkspace_group_members.test", "members.#", "2"),
+				),
+			},
+		},
+	})
+}
