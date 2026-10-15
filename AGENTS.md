@@ -30,11 +30,11 @@ Environment variables for acceptance tests:
 
 Always load `terraform-provider-dev`. Load the relevant API skill alongside it when working on a resource.
 
-| Files                                                                                                                                         | Skills                   |
-| --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
-| Any resource or data source                                                                                                                   | `terraform-provider-dev` |
-| resource_user, resource_group, resource_group_members, resource_group_settings, resource_org_unit, resource_role_assignment, data_source_role | + `admin-directory-api`  |
-| resource_drive, resource_drive_permission, resource_drive_org_unit_membership                                                                 | + `google-drive-api`     |
+| Files                                                                                                                                                                | Skills                   |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| Any resource or data source                                                                                                                                          | `terraform-provider-dev` |
+| resource_user, resource_group, resource_group_member, resource_group_members, resource_group_settings, resource_org_unit, resource_role_assignment, data_source_role | + `admin-directory-api`  |
+| resource_drive, resource_drive_permission, resource_drive_org_unit_membership                                                                                        | + `google-drive-api`     |
 
 ## Architecture
 
