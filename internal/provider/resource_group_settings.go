@@ -3,11 +3,13 @@ package provider
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
@@ -34,6 +36,9 @@ type groupSettingsResourceModel struct {
 	WhoCanViewMembership   types.String `tfsdk:"who_can_view_membership"`
 	WhoCanPostMessage      types.String `tfsdk:"who_can_post_message"`
 	MessageModerationLevel types.String `tfsdk:"message_moderation_level"`
+	AllowExternalMembers   types.Bool   `tfsdk:"allow_external_members"`
+	ReplyTo                types.String `tfsdk:"reply_to"`
+	CustomReplyTo          types.String `tfsdk:"custom_reply_to"`
 }
 
 func (r *groupSettingsResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -84,6 +89,40 @@ func (r *groupSettingsResource) Schema(_ context.Context, _ resource.SchemaReque
 					),
 				},
 			},
+			// The attributes below are Computed for the same reason as who_can_post_message: when left
+			// unset, the value set in the Console is kept rather than producing a perpetual diff.
+			"allow_external_members": schema.BoolAttribute{
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"reply_to": schema.StringAttribute{
+				Optional: true,
+				Computed: true,
+				Validators: []validator.String{
+					stringvalidator.OneOf(
+						"REPLY_TO_CUSTOM",
+						"REPLY_TO_SENDER",
+						"REPLY_TO_LIST",
+						"REPLY_TO_OWNER",
+						"REPLY_TO_IGNORE",
+						"REPLY_TO_MANAGERS",
+					),
+				},
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+			// custom_reply_to is required by the API when reply_to is REPLY_TO_CUSTOM.
+			"custom_reply_to": schema.StringAttribute{
+				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
 		},
 	}
 }
@@ -115,23 +154,15 @@ func (r *groupSettingsResource) Create(ctx context.Context, req resource.CreateR
 
 	plan.Id = plan.Email
 
-	settings := &groupssettings.Groups{
-		WhoCanViewMembership:   plan.WhoCanViewMembership.ValueString(),
-		WhoCanPostMessage:      plan.WhoCanPostMessage.ValueString(),
-		MessageModerationLevel: plan.MessageModerationLevel.ValueString(),
-	}
-
-	updated, err := svc.Groups.Update(plan.Email.ValueString(), settings).Do()
+	updated, err := svc.Groups.Update(plan.Email.ValueString(), plan.toAPI()).Do()
 	if err != nil {
 		resp.Diagnostics.AddError("API Error", fmt.Sprintf("Unable to update group settings: %s", err))
 		return
 	}
 
-	// who_can_post_message is Computed: populate it from the API response so a value left unset in
-	// the configuration resolves to the server-assigned value rather than staying unknown.
-	if updated.WhoCanPostMessage != "" {
-		plan.WhoCanPostMessage = types.StringValue(updated.WhoCanPostMessage)
-	}
+	// Computed attributes: populate them from the API response so a value left unset in the
+	// configuration resolves to the server-assigned value rather than staying unknown.
+	plan.setComputedFromAPI(updated)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
@@ -162,12 +193,10 @@ func (r *groupSettingsResource) Read(ctx context.Context, req resource.ReadReque
 	if settings.WhoCanViewMembership != "" {
 		state.WhoCanViewMembership = types.StringValue(settings.WhoCanViewMembership)
 	}
-	if settings.WhoCanPostMessage != "" {
-		state.WhoCanPostMessage = types.StringValue(settings.WhoCanPostMessage)
-	}
 	if settings.MessageModerationLevel != "" {
 		state.MessageModerationLevel = types.StringValue(settings.MessageModerationLevel)
 	}
+	state.setComputedFromAPI(settings)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
@@ -187,21 +216,13 @@ func (r *groupSettingsResource) Update(ctx context.Context, req resource.UpdateR
 
 	plan.Id = plan.Email
 
-	settings := &groupssettings.Groups{
-		WhoCanViewMembership:   plan.WhoCanViewMembership.ValueString(),
-		WhoCanPostMessage:      plan.WhoCanPostMessage.ValueString(),
-		MessageModerationLevel: plan.MessageModerationLevel.ValueString(),
-	}
-
-	updated, err := svc.Groups.Update(plan.Email.ValueString(), settings).Do()
+	updated, err := svc.Groups.Update(plan.Email.ValueString(), plan.toAPI()).Do()
 	if err != nil {
 		resp.Diagnostics.AddError("API Error", fmt.Sprintf("Unable to update group settings: %s", err))
 		return
 	}
 
-	if updated.WhoCanPostMessage != "" {
-		plan.WhoCanPostMessage = types.StringValue(updated.WhoCanPostMessage)
-	}
+	plan.setComputedFromAPI(updated)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
@@ -213,4 +234,48 @@ func (r *groupSettingsResource) Delete(_ context.Context, _ resource.DeleteReque
 func (r *groupSettingsResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), req.ID)...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("email"), req.ID)...)
+}
+
+// toAPI builds the settings to send. Unset Computed attributes are unknown or null and send an empty
+// string, which omitempty drops, so the Update keeps their current values.
+func (m *groupSettingsResourceModel) toAPI() *groupssettings.Groups {
+	settings := &groupssettings.Groups{
+		WhoCanViewMembership:   m.WhoCanViewMembership.ValueString(),
+		WhoCanPostMessage:      m.WhoCanPostMessage.ValueString(),
+		MessageModerationLevel: m.MessageModerationLevel.ValueString(),
+		ReplyTo:                m.ReplyTo.ValueString(),
+		CustomReplyTo:          m.CustomReplyTo.ValueString(),
+	}
+	// The API encodes this boolean as the string "true" or "false", so false is not dropped.
+	if !m.AllowExternalMembers.IsNull() && !m.AllowExternalMembers.IsUnknown() {
+		settings.AllowExternalMembers = strconv.FormatBool(m.AllowExternalMembers.ValueBool())
+	}
+	return settings
+}
+
+// setComputedFromAPI copies the Computed attributes from an API response. A value the response
+// does not include must still be known after apply, so it resolves to null.
+func (m *groupSettingsResourceModel) setComputedFromAPI(settings *groupssettings.Groups) {
+	if settings.WhoCanPostMessage != "" {
+		m.WhoCanPostMessage = types.StringValue(settings.WhoCanPostMessage)
+	}
+	switch {
+	case settings.AllowExternalMembers != "":
+		m.AllowExternalMembers = types.BoolValue(settings.AllowExternalMembers == "true")
+	case m.AllowExternalMembers.IsUnknown():
+		m.AllowExternalMembers = types.BoolNull()
+	}
+	m.ReplyTo = computedString(m.ReplyTo, settings.ReplyTo)
+	m.CustomReplyTo = computedString(m.CustomReplyTo, settings.CustomReplyTo)
+}
+
+func computedString(current types.String, fromAPI string) types.String {
+	switch {
+	case fromAPI != "":
+		return types.StringValue(fromAPI)
+	case current.IsUnknown():
+		return types.StringNull()
+	default:
+		return current
+	}
 }
