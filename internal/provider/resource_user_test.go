@@ -5,9 +5,11 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/terraform"
 )
 
 func TestAccUser_Create(t *testing.T) {
@@ -427,6 +429,166 @@ resource "googleworkspace_user" "test" {
 				ImportState:       true,
 				ImportStateId:     "user-import",
 				ImportStateVerify: true,
+			},
+		},
+	})
+}
+
+// TestAccUser_RemoveCustomSchemas verifies that a custom schema removed from config is cleared with
+// explicit nulls. The API keeps every custom field that an update leaves out.
+func TestAccUser_RemoveCustomSchemas(t *testing.T) {
+	var mu sync.Mutex
+	customSchemas := map[string]map[string]any{
+		"Mapbox":     {"role": "Admin"},
+		"Contractor": {"contractor": true},
+	}
+	var updates []map[string]any
+
+	userResponse := func() map[string]any {
+		// A schema with every field cleared is returned as an empty object.
+		schemas := map[string]any{}
+		for name, values := range customSchemas {
+			schemas[name] = values
+		}
+		return map[string]any{
+			"kind":          "admin#directory#user",
+			"id":            "user-remove",
+			"primaryEmail":  "deepti@way.cloud",
+			"name":          map[string]any{"givenName": "Deepti", "familyName": "Test"},
+			"orgUnitPath":   "/",
+			"suspended":     false,
+			"archived":      false,
+			"customSchemas": schemas,
+		}
+	}
+
+	server := setupTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/admin/directory/v1/customer/C00000000/schemas/Mapbox"):
+			jsonResponse(w, 200, schemaResponse("schema-mapbox", "Mapbox", "Mapbox", []map[string]any{
+				{"fieldName": "role", "fieldType": "STRING", "multiValued": false},
+			}))
+
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/admin/directory/v1/customer/C00000000/schemas/Contractor"):
+			jsonResponse(w, 200, schemaResponse("schema-contractor", "Contractor", "Contractor", []map[string]any{
+				{"fieldName": "contractor", "fieldType": "BOOL", "multiValued": false},
+			}))
+
+		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/admin/directory/v1/users"):
+			jsonResponse(w, 200, userResponse())
+
+		case r.Method == "PUT" && strings.HasSuffix(r.URL.Path, "/admin/directory/v1/users/user-remove"):
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode request: %v", err)
+			}
+			updates = append(updates, body)
+			sent, _ := body["customSchemas"].(map[string]any)
+			for name, values := range sent {
+				for field, value := range values.(map[string]any) {
+					if value == nil {
+						delete(customSchemas[name], field)
+					} else {
+						customSchemas[name][field] = value
+					}
+				}
+			}
+			jsonResponse(w, 200, userResponse())
+
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/admin/directory/v1/users/user-remove"):
+			jsonResponse(w, 200, userResponse())
+
+		case r.Method == "DELETE" && strings.HasSuffix(r.URL.Path, "/admin/directory/v1/users/user-remove"):
+			w.WriteHeader(204)
+
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(500)
+		}
+	}))
+	setupTestClient(t, server)
+
+	lastUpdateSchemas := func() map[string]any {
+		mu.Lock()
+		defer mu.Unlock()
+		if len(updates) == 0 {
+			t.Fatal("no update request was sent")
+		}
+		schemas, ok := updates[len(updates)-1]["customSchemas"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected customSchemas in the update, got %#v", updates[len(updates)-1])
+		}
+		return schemas
+	}
+	user := func(customSchemas string) string {
+		return testProviderConfig + `
+resource "googleworkspace_user" "test" {
+  primary_email = "deepti@way.cloud"
+
+  name {
+    given_name  = "Deepti"
+    family_name = "Test"
+  }
+` + customSchemas + `
+}
+`
+	}
+
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: user(`
+  custom_schemas {
+    schema_name   = "Contractor"
+    schema_values = { contractor = jsonencode(true) }
+  }
+  custom_schemas {
+    schema_name   = "Mapbox"
+    schema_values = { role = jsonencode("Admin") }
+  }
+`),
+			},
+			{
+				// Remove one schema and keep the other.
+				Config: user(`
+  custom_schemas {
+    schema_name   = "Mapbox"
+    schema_values = { role = jsonencode("Admin") }
+  }
+`),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("googleworkspace_user.test", "custom_schemas.#", "1"),
+					resource.TestCheckResourceAttr("googleworkspace_user.test", "custom_schemas.0.schema_name", "Mapbox"),
+					func(*terraform.State) error {
+						schemas := lastUpdateSchemas()
+						contractor, ok := schemas["Contractor"].(map[string]any)
+						if value, set := contractor["contractor"]; !ok || !set || value != nil {
+							t.Errorf("expected Contractor.contractor=null, got %#v", schemas["Contractor"])
+						}
+						if mapbox, _ := schemas["Mapbox"].(map[string]any); mapbox["role"] != "Admin" {
+							t.Errorf("expected Mapbox.role=Admin, got %#v", schemas["Mapbox"])
+						}
+						return nil
+					},
+				),
+			},
+			{
+				// Remove the last schema.
+				Config: user(""),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("googleworkspace_user.test", "custom_schemas.#", "0"),
+					func(*terraform.State) error {
+						schemas := lastUpdateSchemas()
+						mapbox, ok := schemas["Mapbox"].(map[string]any)
+						if value, set := mapbox["role"]; !ok || !set || value != nil {
+							t.Errorf("expected Mapbox.role=null, got %#v", schemas["Mapbox"])
+						}
+						return nil
+					},
+				),
 			},
 		},
 	})

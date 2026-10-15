@@ -258,11 +258,13 @@ func (r *userResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		resp.Diagnostics.AddError("Custom Schemas Error", err.Error())
 		return
 	}
-	if customSchemas != nil {
+	customSchemas, err = nullRemovedCustomSchemaFields(ctx, customSchemas, state.CustomSchemas, config.CustomSchemas)
+	if err != nil {
+		resp.Diagnostics.AddError("Custom Schemas Error", err.Error())
+		return
+	}
+	if len(customSchemas) > 0 {
 		user.CustomSchemas = customSchemas
-		user.ForceSendFields = append(user.ForceSendFields, "CustomSchemas")
-	} else if len(state.CustomSchemas) > 0 {
-		user.CustomSchemas = map[string]googleapi.RawMessage{}
 		user.ForceSendFields = append(user.ForceSendFields, "CustomSchemas")
 	}
 
@@ -444,6 +446,10 @@ func terraformCustomSchemasFromAPI(ctx context.Context, svc *directory.Service, 
 		if err := json.Unmarshal(customSchemas[schemaName], &apiSchemaValues); err != nil {
 			return nil, fmt.Errorf("custom_schemas[%q] returned invalid JSON: %w", schemaName, err)
 		}
+		// A schema with every field cleared has no values: it is not set on the user.
+		if len(apiSchemaValues) == 0 {
+			continue
+		}
 
 		fieldDefs := schemaFieldSpecMap(schemaDef)
 		stateSchemaValues := make(map[string]string, len(apiSchemaValues))
@@ -477,6 +483,57 @@ func terraformCustomSchemasFromAPI(ctx context.Context, svc *directory.Service, 
 	}
 
 	return stateValues, nil
+}
+
+// nullRemovedCustomSchemaFields sets each field that is in state but not in config to null. The API
+// keeps every custom field that an update leaves out, so a removed field must be cleared explicitly.
+func nullRemovedCustomSchemaFields(ctx context.Context, apiValues map[string]googleapi.RawMessage, state, config []userCustomSchemaModel) (map[string]googleapi.RawMessage, error) {
+	configured := make(map[string]map[string]string, len(config))
+	for _, customSchema := range config {
+		var values map[string]string
+		if diags := customSchema.SchemaValues.ElementsAs(ctx, &values, false); diags.HasError() {
+			return nil, fmt.Errorf("unable to read custom_schemas[%q].schema_values", customSchema.SchemaName.ValueString())
+		}
+		configured[customSchema.SchemaName.ValueString()] = values
+	}
+
+	for _, customSchema := range state {
+		schemaName := customSchema.SchemaName.ValueString()
+		var stateValues map[string]string
+		if diags := customSchema.SchemaValues.ElementsAs(ctx, &stateValues, false); diags.HasError() {
+			return nil, fmt.Errorf("unable to read custom_schemas[%q].schema_values state", schemaName)
+		}
+
+		values := map[string]any{}
+		for fieldName := range stateValues {
+			if _, ok := configured[schemaName][fieldName]; !ok {
+				values[fieldName] = nil
+			}
+		}
+		if len(values) == 0 {
+			continue
+		}
+
+		if apiValues == nil {
+			apiValues = map[string]googleapi.RawMessage{}
+		}
+		if raw, ok := apiValues[schemaName]; ok {
+			var kept map[string]any
+			if err := json.Unmarshal(raw, &kept); err != nil {
+				return nil, fmt.Errorf("unable to decode custom_schemas[%q]: %w", schemaName, err)
+			}
+			for fieldName, value := range kept {
+				values[fieldName] = value
+			}
+		}
+		raw, err := json.Marshal(values)
+		if err != nil {
+			return nil, fmt.Errorf("unable to encode custom_schemas[%q]: %w", schemaName, err)
+		}
+		apiValues[schemaName] = googleapi.RawMessage(raw)
+	}
+
+	return apiValues, nil
 }
 
 func schemaFieldSpecMap(schemaDef *directory.Schema) map[string]*directory.SchemaFieldSpec {
