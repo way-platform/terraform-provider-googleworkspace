@@ -191,6 +191,7 @@ func (p *googleworkspaceProvider) Resources(ctx context.Context) []func() resour
 		newDrivePermission,
 		newOrgUnit,
 		newGroup,
+		newGroupMember,
 		newGroupMembers,
 		newGroupSettings,
 		newRoleAssignment,
